@@ -1,0 +1,11 @@
+version: "0.3.0"
+description: "Explainable company vulnerability heuristic; not statistically calibrated."
+minimum_components: 2
+minimum_coverage: 0.30
+weights:
+  cash_to_debt: 0.15
+  debt_to_assets: 0.15
+  lease_to_assets: 0.10
+  capex_to_operating_cash_flow: 0.20
+  free_cash_flow: 0.20
+  interest_coverage: 0.20

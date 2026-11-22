@@ -1,0 +1,27 @@
+services:
+  backend-tests:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend-test
+    image: ai-bubble-monitor-tests:dev
+
+  ai-bubble-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-bubble-monitor:dev
+    container_name: ai-bubble-monitor
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8099:8099"
+    environment:
+      DATA_DIR: /data
+      HA_INGRESS_MODE: "false"
+      HOST: 0.0.0.0
+      PORT: 8099
+      FRED_API_KEY: ${FRED_API_KEY:-}
+      SEC_USER_AGENT: ${SEC_USER_AGENT:-}
+    volumes:
+      - ./dev-data:/data

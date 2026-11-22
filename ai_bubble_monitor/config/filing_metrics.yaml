@@ -1,0 +1,123 @@
+# Initial filing-level XBRL pilot. Keep these facts out of scenario scoring until
+# equivalent, verified coverage exists across a meaningful share of the group.
+history:
+  lookback_years: 4
+  max_filings_per_collection: 4
+customer_concentration:
+  crwv:
+    metric: customer_revenue_concentration_percent
+    tags: [us-gaap:ConcentrationRiskPercentage1]
+    customer_axes: [srt:MajorCustomersAxis]
+    required_dimensions: {us-gaap:ConcentrationRiskByTypeAxis: us-gaap:CustomerConcentrationRiskMember}
+    benchmark_axis: us-gaap:ConcentrationRiskByBenchmarkAxis
+    benchmark_members: [us-gaap:RevenueFromContractWithCustomerMember, us-gaap:SalesRevenueNetMember]
+    include_year_ago_comparative: true
+  nbis:
+    metric: customer_revenue_concentration_percent
+    tags: [us-gaap:ConcentrationRiskPercentage1]
+    customer_axes: [srt:MajorCustomersAxis]
+    required_dimensions: {us-gaap:ConcentrationRiskByTypeAxis: us-gaap:CustomerConcentrationRiskMember}
+    benchmark_axis: us-gaap:ConcentrationRiskByBenchmarkAxis
+    benchmark_members: [us-gaap:RevenueFromContractWithCustomerMember, us-gaap:SalesRevenueNetMember]
+    include_year_ago_comparative: true
+  iren:
+    metric: customer_revenue_concentration_percent
+    tags: [us-gaap:ConcentrationRiskPercentage1]
+    customer_axes: [srt:MajorCustomersAxis]
+    required_dimensions: {us-gaap:ConcentrationRiskByTypeAxis: us-gaap:CustomerConcentrationRiskMember}
+    benchmark_axis: us-gaap:ConcentrationRiskByBenchmarkAxis
+    benchmark_members: [us-gaap:RevenueFromContractWithCustomerMember, us-gaap:SalesRevenueNetMember]
+    include_year_ago_comparative: true
+  apld:
+    metric: customer_revenue_concentration_percent
+    tags: [us-gaap:ConcentrationRiskPercentage1]
+    customer_axes: [srt:MajorCustomersAxis]
+    required_dimensions: {us-gaap:ConcentrationRiskByTypeAxis: us-gaap:CustomerConcentrationRiskMember}
+    benchmark_axis: us-gaap:ConcentrationRiskByBenchmarkAxis
+    benchmark_members: [us-gaap:RevenueFromContractWithCustomerMember, us-gaap:SalesRevenueNetMember]
+    include_year_ago_comparative: true
+  dlr:
+    metric: customer_revenue_concentration_percent
+    tags: [dlr:LargestCustomerAccountingForTotalRevenuePercent]
+    customer_axes: [srt:MajorCustomersAxis]
+    include_year_ago_comparative: true
+  mu:
+    metric: customer_revenue_concentration_percent
+    tags: [us-gaap:ConcentrationRiskPercentage1]
+    customer_axes: [srt:MajorCustomersAxis]
+    required_dimensions: {us-gaap:ConcentrationRiskByTypeAxis: us-gaap:CustomerConcentrationRiskMember}
+    benchmark_axis: us-gaap:ConcentrationRiskByBenchmarkAxis
+    benchmark_members: [us-gaap:RevenueFromContractWithCustomerMember, us-gaap:SalesRevenueNetMember]
+    include_year_ago_comparative: true
+  tsm:
+    metric: customer_revenue_concentration_percent
+    tags: [ifrs-full:PercentageOfEntitysRevenue]
+    customer_axes: [ifrs-full:MajorCustomersAxis]
+    include_year_ago_comparative: true
+companies:
+  amzn:
+    - metric: cloud_revenue_aws
+      tag: us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax
+      required_dimensions:
+        us-gaap:StatementBusinessSegmentsAxis: amzn:AmazonWebServicesSegmentMember
+      period_kind: quarter
+      include_year_ago_comparative: true
+      minimum_facts: 2
+    - metric: rpo_reported
+      tag: us-gaap:RevenueRemainingPerformanceObligation
+      required_dimension_axes:
+        - us-gaap:RevenueRemainingPerformanceObligationExpectedTimingOfSatisfactionStartDateAxis
+      forbidden_dimensions:
+        - srt:MajorCustomersAxis
+      period_kind: instant
+      collect_prior_year_comparative: true
+  msft:
+    - metric: cloud_revenue_azure
+      tag: us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax
+      required_dimensions:
+        srt:ProductOrServiceAxis: msft:AzureMember
+      period_kind: quarter
+      include_year_ago_comparative: true
+      minimum_facts: 2
+      # Absolute Azure revenue first appears in the current filing's quantified table.
+      # Older filings disclose growth rates, not comparable quarterly dollar values.
+      historical_from: "2026-09-30"
+    - metric: rpo_reported
+      tag: us-gaap:RevenueRemainingPerformanceObligation
+      forbidden_dimensions:
+        - srt:MajorCustomersAxis
+      period_kind: instant
+      collect_prior_year_comparative: true
+  googl:
+    - metric: cloud_revenue_google
+      tag: us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax
+      required_dimensions:
+        us-gaap:StatementBusinessSegmentsAxis: goog:GoogleCloudMember
+      period_kind: quarter
+      include_year_ago_comparative: true
+      # Some filings repeat segment totals alongside product-level dimensions.
+      exact_dimensions: false
+      minimum_facts: 2
+    - metric: rpo_reported
+      tag: us-gaap:RevenueRemainingPerformanceObligation
+      forbidden_dimensions:
+        - srt:MajorCustomersAxis
+      period_kind: instant
+      collect_prior_year_comparative: true
+      historical_from: "2023-09-30"
+  orcl:
+    - metric: cloud_revenue_oracle
+      tag: us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax
+      required_dimension_values:
+        srt:ProductOrServiceAxis:
+          - orcl:CloudRevenuesMember
+          - orcl:CloudServicesMember
+      period_kind: quarter
+      include_year_ago_comparative: true
+      minimum_facts: 2
+    - metric: rpo_reported
+      tag: us-gaap:RevenueRemainingPerformanceObligation
+      forbidden_dimensions:
+        - srt:MajorCustomersAxis
+      period_kind: instant
+      collect_prior_year_comparative: true

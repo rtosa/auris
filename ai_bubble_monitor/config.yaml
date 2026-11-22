@@ -1,0 +1,29 @@
+name: AI Bubble Monitor
+slug: ai_bubble_monitor
+version: 0.17.0
+description: Local AI risk monitor with explainable scenario scores
+arch:
+  - amd64
+startup: application
+init: false
+boot: auto
+ingress: true
+ingress_port: 8099
+ingress_entry: /
+panel_icon: mdi:chart-line
+panel_title: AI Bubble Monitor
+panel_admin: false
+options:
+  log_level: info
+  collection_interval_minutes: 60
+  scoring_interval_minutes: 60
+  fred_api_key: ""
+  sec_user_agent: ""
+  historical_window_days: 1825
+schema:
+  log_level: list(debug|info|warning|error)
+  collection_interval_minutes: int(15,1440)
+  scoring_interval_minutes: int(15,1440)
+  fred_api_key: password
+  sec_user_agent: str
+  historical_window_days: int(365,3650)

@@ -1,0 +1,18 @@
+companies:
+  - {id: nvda, name: NVIDIA, ticker: NVDA, cik: "0001045810", group: semiconductors}
+  - {id: msft, name: Microsoft, ticker: MSFT, cik: "0000789019", group: hyperscalers}
+  - {id: amzn, name: Amazon, ticker: AMZN, cik: "0001018724", group: hyperscalers}
+  - {id: googl, name: Alphabet, ticker: GOOGL, cik: "0001652044", group: hyperscalers}
+  - {id: meta, name: Meta Platforms, ticker: META, cik: "0001326801", group: hyperscalers}
+  - {id: orcl, name: Oracle, ticker: ORCL, cik: "0001341439", group: hyperscalers}
+  - {id: amd, name: AMD, ticker: AMD, cik: "0000002488", group: semiconductors}
+  - {id: avgo, name: Broadcom, ticker: AVGO, cik: "0001730168", group: semiconductors}
+  - {id: crwv, name: CoreWeave, ticker: CRWV, cik: "0001769628", group: neoclouds}
+  - {id: nbis, name: Nebius Group, ticker: NBIS, cik: "0001513845", group: neoclouds}
+  - {id: iren, name: IREN, ticker: IREN, cik: "0001878848", group: neoclouds}
+  - {id: apld, name: Applied Digital, ticker: APLD, cik: "0001144879", group: neoclouds}
+  - {id: dlr, name: Digital Realty, ticker: DLR, cik: "0001297996", group: data_centers}
+  - {id: eqix, name: Equinix, ticker: EQIX, cik: "0001101239", group: data_centers}
+  - {id: dbrg, name: DigitalBridge, ticker: DBRG, cik: "0001679688", group: data_centers}
+  - {id: mu, name: Micron Technology, ticker: MU, cik: "0000723125", group: semiconductors}
+  - {id: tsm, name: Taiwan Semiconductor, ticker: TSM, cik: "0001046179", group: semiconductors}

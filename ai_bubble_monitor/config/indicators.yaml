@@ -1,0 +1,241 @@
+version: 1
+indicators:
+  - id: sp500
+    name: S&P 500
+    category: equity
+    unit: index_points
+    frequency: daily
+    direction: higher_is_better
+    normalization_method: moving_average_deviation
+    source: fred
+    source_id: SP500
+    staleness_days: 7
+    scenarios: {boom_continuation: 0.2, prolonged_repricing: 0.15, macro_crisis: 0.2}
+  - id: nasdaq_composite
+    name: Nasdaq Composite
+    category: equity
+    unit: index_points
+    frequency: daily
+    direction: higher_is_better
+    normalization_method: moving_average_deviation
+    source: fred
+    source_id: NASDAQCOM
+    staleness_days: 7
+    scenarios: {boom_continuation: 0.3, prolonged_repricing: 0.25, macro_crisis: 0.15}
+  - id: russell_2000
+    name: Russell 2000
+    category: equity
+    unit: index_points
+    frequency: daily
+    direction: higher_is_better
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: RUSSELL2000
+    enabled: false
+    availability_note: "FRED removed this Russell index series from its catalog in 2019."
+    staleness_days: 7
+    scenarios: {boom_continuation: 0.1, prolonged_repricing: 0.15, macro_crisis: 0.15}
+  - id: vix
+    name: CBOE Volatility Index (VIX)
+    category: volatility
+    unit: index_points
+    frequency: daily
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: VIXCLS
+    staleness_days: 7
+    scenarios: {prolonged_repricing: 0.2, credit_crunch: 0.15, macro_crisis: 0.2}
+  - id: us_2y_yield
+    name: US Treasury 2-Year Yield
+    category: rates
+    unit: percent
+    frequency: daily
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: DGS2
+    staleness_days: 7
+    scenarios: {prolonged_repricing: 0.15, credit_crunch: 0.1, macro_crisis: 0.15}
+  - id: us_10y_yield
+    name: US Treasury 10-Year Yield
+    category: rates
+    unit: percent
+    frequency: daily
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: DGS10
+    staleness_days: 7
+    scenarios: {prolonged_repricing: 0.15, credit_crunch: 0.1, macro_crisis: 0.15}
+  - id: high_yield_oas
+    name: US High Yield Option-Adjusted Spread
+    category: credit
+    unit: percent
+    frequency: daily
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: BAMLH0A0HYM2
+    staleness_days: 7
+    scenarios: {prolonged_repricing: 0.15, credit_crunch: 0.3, macro_crisis: 0.2}
+  - id: investment_grade_oas
+    name: US Investment Grade Option-Adjusted Spread
+    category: credit
+    unit: percent
+    frequency: daily
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: BAMLC0A0CM
+    staleness_days: 7
+    scenarios: {prolonged_repricing: 0.1, credit_crunch: 0.2, macro_crisis: 0.15}
+  - id: bank_lending_tightening
+    name: Bank Lending Tightening for Commercial and Industrial Loans
+    category: credit
+    unit: percent
+    frequency: quarterly
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: DRTSCILM
+    staleness_days: 150
+    minimum_observations: 16
+    availability_note: "Quarterly series; 16-quarter minimum uses four years of the five-year initial backfill. Confidence is discounted accordingly."
+    scenarios: {credit_crunch: 0.15, macro_crisis: 0.05}
+  - id: nfci
+    name: Chicago Fed National Financial Conditions Index
+    category: financial_conditions
+    unit: index_points
+    frequency: weekly
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: NFCI
+    staleness_days: 21
+    scenarios: {prolonged_repricing: 0.1, credit_crunch: 0.15, macro_crisis: 0.2}
+  - id: financial_stress_index
+    name: St. Louis Fed Financial Stress Index
+    category: financial_conditions
+    unit: index_points
+    frequency: weekly
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: STLFSI4
+    staleness_days: 21
+    scenarios: {credit_crunch: 0.2, macro_crisis: 0.2}
+  - id: industrial_production
+    name: US Industrial Production Index
+    category: economic_activity
+    unit: index_points
+    frequency: monthly
+    direction: higher_is_better
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: INDPRO
+    staleness_days: 60
+    scenarios: {credit_crunch: 0.05, macro_crisis: 0.1}
+  - id: initial_jobless_claims
+    name: Initial Unemployment Insurance Claims
+    category: labor
+    unit: persons
+    frequency: weekly
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: ICSA
+    staleness_days: 21
+    scenarios: {credit_crunch: 0.1, macro_crisis: 0.1}
+  - id: broad_us_dollar
+    name: Trade Weighted US Dollar Index
+    category: fx
+    unit: index_points
+    frequency: daily
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: DTWEXBGS
+    staleness_days: 7
+    scenarios: {prolonged_repricing: 0.05, credit_crunch: 0.1, macro_crisis: 0.15}
+  - id: cpi_index
+    name: US Consumer Price Index (seasonally adjusted)
+    category: inflation
+    unit: index_points
+    frequency: monthly
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: CPIAUCSL
+    staleness_days: 60
+    minimum_observations: 48
+    availability_note: "Monthly series; 48-month minimum leaves room for incomplete month boundaries in the five-year initial backfill."
+    scenarios: {prolonged_repricing: 0.1, macro_crisis: 0.2}
+  - id: unemployment_rate
+    name: US Unemployment Rate
+    category: labor
+    unit: percent
+    frequency: monthly
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: UNRATE
+    staleness_days: 60
+    minimum_observations: 48
+    availability_note: "Monthly series; 48-month minimum leaves room for incomplete month boundaries in the five-year initial backfill."
+    scenarios: {credit_crunch: 0.1, macro_crisis: 0.2}
+  - id: fed_funds_rate
+    name: Effective Federal Funds Rate
+    category: rates
+    unit: percent
+    frequency: monthly
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: FEDFUNDS
+    staleness_days: 60
+    scenarios: {prolonged_repricing: 0.15, macro_crisis: 0.1}
+  - id: wti_crude_oil
+    name: WTI Crude Oil Spot Price
+    category: energy
+    unit: usd_per_barrel
+    frequency: daily
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: DCOILWTICO
+    staleness_days: 10
+    scenarios: {macro_crisis: 0.1}
+  - id: henry_hub_natural_gas
+    name: Henry Hub Natural Gas Spot Price
+    category: energy
+    unit: usd_per_mmbtu
+    frequency: daily
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: DHHNGSP
+    staleness_days: 10
+    scenarios: {macro_crisis: 0.1}
+  - id: bitcoin_usd
+    name: Bitcoin (USD)
+    category: crypto
+    unit: usd
+    frequency: daily
+    direction: higher_is_better
+    normalization_method: rolling_percentile
+    source: coinpaprika
+    source_id: btc-bitcoin
+    staleness_days: 2
+    scenarios: {boom_continuation: 0.15, prolonged_repricing: 0.1, macro_crisis: 0.1}
+  - id: ethereum_usd
+    name: Ethereum (USD)
+    category: crypto
+    unit: usd
+    frequency: daily
+    direction: higher_is_better
+    normalization_method: rolling_percentile
+    source: coinpaprika
+    source_id: eth-ethereum
+    staleness_days: 2
+    scenarios: {boom_continuation: 0.15, prolonged_repricing: 0.1, macro_crisis: 0.1}

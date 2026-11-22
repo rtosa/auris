@@ -1,0 +1,79 @@
+version: "0.8.0"
+description: "Coverage-gated market, macroeconomic, and filing-linked SEC company risk scores."
+defaults:
+  lookback_days: 1825
+  minimum_observations: 60
+  method: rolling_percentile
+  source_confidence:
+    fred: 0.95
+    coinpaprika: 0.85
+  minimum_coverage: 0.50
+  maximum_reweight_factor: 2.0
+  minimum_confidence: 0.60
+  persistence_threshold: 60
+  persistence_lookback_days: 30
+  persistence_required_days: 20
+  classifications:
+    - {max: 19, label: Very low signal}
+    - {max: 39, label: Low signal}
+    - {max: 59, label: Moderate signal}
+    - {max: 79, label: High signal}
+    - {max: 100, label: Critical signal}
+company_group_metrics:
+  max_reporting_age_days: 550
+  minimum_group_coverage: 0.5
+  source_confidence: 0.9
+  debt_maturity_ratio_cap: 1.0
+  purchase_obligation_to_assets_ratio_cap: 0.5
+scenarios:
+  boom_continuation:
+    name: AI Boom Continuation / Relief Rally
+    components:
+      - {id: equity_momentum, name: Equity momentum, weight: 0.25, direction: favorable, indicators: [sp500, nasdaq_composite]}
+      - {id: ai_earnings_guidance, name: AI earnings and guidance, weight: 0.25, direction: risk, indicators: []}
+      - {id: compute_demand, name: Compute demand, weight: 0.20, direction: favorable, indicators: []}
+      - {id: credit_conditions, name: Credit conditions, weight: 0.15, direction: favorable, indicators: [high_yield_oas, investment_grade_oas]}
+      - {id: capex_continuation, name: Company balance-sheet resilience proxy, weight: 0.15, direction: favorable, indicators: [company_group:hyperscalers, company_group:semiconductors]}
+  prolonged_repricing:
+    name: Prolonged Repricing
+    components:
+      - {id: equity_valuation_momentum, name: Equity market momentum proxy; valuation unavailable, weight: 0.25, direction: risk, coverage_cap: 0.50, indicators: [sp500, nasdaq_composite]}
+      - {id: capex_fcf_divergence, name: Company CAPEX / FCF and balance-sheet risk, weight: 0.25, direction: risk, indicators: [company_group:hyperscalers, company_group:neoclouds, company_group:semiconductors]}
+      - {id: ai_monetization, name: AI monetization, weight: 0.20, direction: risk, indicators: []}
+      - {id: earnings_revisions, name: Earnings revisions, weight: 0.15, direction: risk, indicators: []}
+      - {id: interest_rates, name: Interest rates, weight: 0.15, direction: risk, indicators: [us_2y_yield, us_10y_yield, fed_funds_rate]}
+  credit_crunch:
+    name: AI Credit Crunch / Domino Effect
+    components:
+      - {id: neocloud_credit_stress, name: Neocloud credit stress proxy from SEC company scores, weight: 0.30, direction: risk, indicators: [company_group:neoclouds]}
+      - {id: hyperscaler_credit_stress, name: Hyperscaler credit stress proxy from SEC company scores, weight: 0.20, direction: risk, indicators: [company_group:hyperscalers]}
+      - {id: refinancing_risk, name: Debt maturing within 12 months proxy, weight: 0.20, direction: risk, indicators: [company_maturity_risk:neoclouds, company_maturity_risk:hyperscalers, company_maturity_risk:data_centers]}
+      - {id: bank_lending_tightening, name: Bank lending tightening proxy, weight: 0.15, direction: risk, indicators: [bank_lending_tightening]}
+      - {id: contractual_commitments, name: Unrecorded purchase obligations proxy, weight: 0.15, direction: risk, indicators: [company_commitment_risk:hyperscalers, company_commitment_risk:neoclouds, company_commitment_risk:data_centers]}
+  macro_crisis:
+    name: Macro Crisis / Stagflation
+    components:
+      - {id: inflation_rates, name: Inflation and interest rates, weight: 0.20, direction: risk, indicators: [cpi_index, fed_funds_rate, us_2y_yield]}
+      - {id: financial_conditions, name: Financial conditions, weight: 0.20, direction: risk, indicators: [nfci, financial_stress_index]}
+      - {id: equity_credit_stress, name: Equity and credit stress, weight: 0.20, direction: risk, indicators: [vix, sp500, nasdaq_composite, high_yield_oas, investment_grade_oas]}
+      - {id: dollar_liquidity, name: USD proxy; direct liquidity data unavailable, weight: 0.10, direction: risk, coverage_cap: 0.50, indicators: [broad_us_dollar]}
+      - {id: energy_prices, name: Energy prices, weight: 0.15, direction: risk, indicators: [wti_crude_oil, henry_hub_natural_gas]}
+      - {id: economic_activity, name: Employment and industrial activity, weight: 0.15, direction: risk, indicators: [unemployment_rate, initial_jobless_claims, industrial_production]}
+composites:
+  fragility_index:
+    name: AI Ecosystem Fragility Index
+    min_coverage: 0.50
+    max_reweight_factor: 2.0
+    inputs:
+      - {id: prolonged_repricing, name: Prolonged repricing, weight: 0.40}
+      - {id: credit_crunch, name: Credit crunch, weight: 0.35}
+      - {id: macro_crisis, name: Macro crisis, weight: 0.25}
+  current_stress_index:
+    name: Current Stress Index
+    min_coverage: 0.50
+    max_reweight_factor: 2.0
+    components:
+      - {id: equity_stress, name: Equity stress, weight: 0.30, direction: risk, indicators: [vix, sp500, nasdaq_composite, bitcoin_usd]}
+      - {id: credit_stress, name: Credit stress, weight: 0.30, direction: risk, indicators: [high_yield_oas, investment_grade_oas, bank_lending_tightening]}
+      - {id: macro_stress, name: Macro stress, weight: 0.25, direction: risk, indicators: [nfci, financial_stress_index]}
+      - {id: liquidity_stress, name: USD/liquidity proxy, weight: 0.15, direction: risk, indicators: [broad_us_dollar]}
