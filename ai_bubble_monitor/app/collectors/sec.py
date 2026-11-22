@@ -19,6 +19,7 @@ from app.collectors.sec_segments import (
     load_filing_metrics,
 )
 from app.collectors.sec_guidance import extract_capex_guidance
+from app.collectors.sec_ai_metrics import extract_ai_revenue_evidence
 
 LOGGER = logging.getLogger(__name__)
 COMPANIES_FILE = Path(__file__).resolve().parents[2] / "config" / "companies.yaml"
@@ -44,7 +45,7 @@ FACT_TAGS: dict[str, tuple[str, ...]] = {
 FLOW_METRICS = {"revenue", "operating_income", "net_income", "operating_cash_flow", "capital_expenditures", "interest_expense", "stock_based_compensation"}
 ALLOWED_FORMS = {"10-Q", "10-K", "20-F", "6-K"}
 RECENT_FORMS = ALLOWED_FORMS | {"8-K"}
-GUIDANCE_SCANNER = "capex_guidance_v1"
+GUIDANCE_SCANNER = "capex_guidance_v4"
 GUIDANCE_FILINGS_PER_ISSUER = 6
 GUIDANCE_BATCH_PER_ISSUER = 2
 GUIDANCE_FORMS = {"8-K", "6-K"}
@@ -126,10 +127,12 @@ async def collect_sec_financials(
     collector = SecCollector(user_agent, client)
     companies = load_companies()
     successes, errors, warnings, fact_count, filing_metric_count, filing_metric_skips = 0, [], [], 0, 0, 0
+    metadata_notices: list[dict[str, str]] = []
     guidance_filings_scanned = guidance_events_found = guidance_filings_pending = 0
     filing_configuration = load_filing_configuration()
     filing_metric_definitions = load_filing_metrics()
     concentration_definitions = filing_configuration.get("customer_concentration", {})
+    concentration_default = filing_configuration.get("customer_concentration_default")
     history_config = filing_configuration.get("history", {})
     history_years = max(1, int(history_config.get("lookback_years", 4)))
     history_limit = max(0, int(historical_filing_limit if historical_filing_limit is not None
@@ -142,8 +145,10 @@ async def collect_sec_financials(
             submissions, facts = await collector.fetch_company(company)
             reported_tickers = {str(value).upper() for value in submissions.get("tickers", [])}
             if reported_tickers and company["ticker"].upper() not in reported_tickers:
-                warnings.append({"ticker": company["ticker"],
-                                 "message": f"CIK verified; configured ticker absent from SEC metadata (reported: {', '.join(sorted(reported_tickers))})"})
+                notice = {"ticker": company["ticker"],
+                          "message": f"Company Facts accepted by verified CIK; SEC metadata lists {', '.join(sorted(reported_tickers))} instead of the configured common-stock ticker."}
+                metadata_notices.append(notice)
+                LOGGER.info("SEC ticker metadata differs for %s: %s", company["ticker"], notice["message"])
             filings = _recent_filings(submissions)
             company_filings[company["id"]] = filings
             records = extract_company_facts(facts, company)
@@ -205,12 +210,21 @@ async def collect_sec_financials(
                         except (httpx.HTTPError, ValueError) as exc:
                             LOGGER.warning("SEC prior-year filing metric failed for %s: %s", company["ticker"], exc)
                             warnings.append({"ticker": company["ticker"], "message": f"Prior-year {definition['metric']} filing: {str(exc)[:250]}"})
-            concentration_definition = concentration_definitions.get(company["id"])
+            concentration_definition = concentration_definitions.get(company["id"]) or concentration_default
             if concentration_definition and latest_filing and latest_filing.get("primary_document"):
+                concentration_scanner = "customer_concentration_v1"
+                with engine.connect() as connection:
+                    concentration_scanned = connection.execute(text("""SELECT 1 FROM sec_filing_scans
+                        WHERE company_id=:company_id AND accession_number=:accession AND scanner=:scanner"""), {
+                        "company_id": company["id"], "accession": latest_filing["accession"],
+                        "scanner": concentration_scanner,
+                    }).first() is not None
                 concentration_metric = str(concentration_definition.get("metric", "customer_revenue_concentration_percent"))
                 saved_counts = _stored_filing_metric_counts(engine, company["id"], latest_filing["accession"])
-                if saved_counts.get(concentration_metric, 0) > 0:
+                if concentration_scanned or saved_counts.get(concentration_metric, 0) > 0:
                     filing_metric_skips += 1
+                    if not concentration_scanned:
+                        _mark_sec_filing_scanned(engine, company["id"], latest_filing["accession"], concentration_scanner)
                 else:
                     try:
                         document = await collector.fetch_filing(latest_filing["source_url"])
@@ -220,9 +234,7 @@ async def collect_sec_financials(
                         if concentration_records:
                             _store_company_records(engine, company, concentration_records)
                             filing_metric_count += len(concentration_records)
-                        else:
-                            warnings.append({"ticker": company["ticker"],
-                                             "message": f"No configured customer-revenue concentration fact found in {latest_filing['accession']}"})
+                        _mark_sec_filing_scanned(engine, company["id"], latest_filing["accession"], concentration_scanner)
                     except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
                         LOGGER.warning("SEC customer-concentration extraction failed for %s: %s", company["ticker"], exc)
                         warnings.append({"ticker": company["ticker"],
@@ -262,7 +274,17 @@ async def collect_sec_financials(
             "guidance_events_found": guidance_events_found,
             "guidance_filings_pending": guidance_filings_pending,
             "company_scoring": score_result, "errors": errors,
-            "warnings": warnings}
+            "warnings": warnings, "metadata_notices": metadata_notices}
+
+
+def _mark_sec_filing_scanned(engine: Engine, company_id: str, accession: str, scanner: str) -> None:
+    with engine.begin() as connection:
+        connection.execute(text("""INSERT INTO sec_filing_scans (company_id, accession_number, scanner, scanned_at)
+            VALUES (:company_id, :accession, :scanner, :scanned_at)
+            ON CONFLICT(company_id, accession_number, scanner) DO NOTHING"""), {
+            "company_id": company_id, "accession": accession, "scanner": scanner,
+            "scanned_at": datetime.now(UTC).isoformat(),
+        })
 
 
 async def _collect_historical_filing_metrics(
@@ -529,6 +551,11 @@ async def _scan_capex_guidance_filings(
         candidate_names = [str(item.get("name", "")) for item in directory_items
                            if str(item.get("name", "")).lower().endswith((".htm", ".html"))
                            and re.search(r"(?:ex|exhibit)[-_]?99[-_.]?1|99[-_.]1", str(item.get("name", "")), re.I)]
+        if not candidate_names:
+            candidate_names = [str(item.get("name", "")) for item in directory_items
+                               if str(item.get("name", "")).lower().endswith((".htm", ".html"))
+                               and re.search(r"(?:press|earnings|results|release|(?:q[1-4]?)?fy\d+pr)",
+                                             str(item.get("name", "")), re.I)]
         if candidate_names:
             exhibit_name = sorted(candidate_names, key=lambda name: ("ex99" not in name.lower(), name.lower()))[0]
             base = filing["source_url"].rsplit("/", 1)[0]
@@ -551,6 +578,20 @@ async def _scan_capex_guidance_filings(
                      :source_quote, :source_accession, :event_key)
                     ON CONFLICT(event_key) DO NOTHING"""), {**record, "event_key": event_key})
             events_found += len(records)
+        ai_records = extract_ai_revenue_evidence(document, company, {**filing, "source_url": source_url})
+        for record in ai_records:
+            key_payload = f"{company['id']}:{filing['accession']}:{record['category']}:{record['source_quote']}"
+            event_key = hashlib.sha256(key_payload.encode("utf-8")).hexdigest()
+            with engine.begin() as connection:
+                connection.execute(text("""INSERT INTO events
+                    (title, summary, company_id, category, severity, published_at, source_url, confidence,
+                     guidance_period, guidance_lower, guidance_upper, guidance_unit, source_quote,
+                     source_accession, event_key)
+                    VALUES (:title, :summary, :company_id, :category, NULL, :published_at, :source_url,
+                     :confidence, :guidance_period, :guidance_lower, :guidance_upper, :guidance_unit,
+                     :source_quote, :source_accession, :event_key)
+                    ON CONFLICT(event_key) DO NOTHING"""), {**record, "event_key": event_key})
+        events_found += len(ai_records)
         with engine.begin() as connection:
             connection.execute(text("""INSERT INTO sec_filing_scans (company_id, accession_number, scanner, scanned_at)
                 VALUES (:company_id, :accession, :scanner, :scanned_at)

@@ -59,9 +59,9 @@ def test_recalculate_persists_normalized_values_and_missing_quality(tmp_path):
     with engine.connect() as connection:
         count = connection.execute(text("SELECT COUNT(*) FROM indicator_values WHERE indicator_id='vix'")).scalar_one()
         missing = connection.execute(text("SELECT data_quality, normalized_value, confidence FROM indicator_values WHERE observation_date='2026-01-13'")).one()
-        version_count = connection.execute(text("SELECT COUNT(*) FROM scoring_versions WHERE version='0.8.0'")).scalar_one()
+        version_count = connection.execute(text("SELECT COUNT(*) FROM scoring_versions WHERE version='0.10.0'")).scalar_one()
 
-    assert first["methodology_version"] == second["methodology_version"] == "0.8.0"
+    assert first["methodology_version"] == second["methodology_version"] == "0.10.0"
     assert count == 90
     assert missing.data_quality == "missing"
     assert missing.normalized_value is None

@@ -6,7 +6,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
 
-from app.collectors.sec import SecCollector, _collect_historical_filing_metrics, _stored_filing_metric_counts, _store_company_records, collect_sec_financials, extract_company_facts, load_companies
+from app.collectors.sec import SecCollector, _collect_historical_filing_metrics, _mark_sec_filing_scanned, _stored_filing_metric_counts, _store_company_records, collect_sec_financials, extract_company_facts, load_companies
 from app.collectors.sec_segments import extract_customer_concentration_metrics, extract_filing_metrics, load_filing_configuration, load_filing_metrics
 from app.collectors.definitions import load_definitions
 from app.database import make_engine, upgrade_database
@@ -206,6 +206,20 @@ def test_customer_concentration_migration_converts_fraction_to_percent_points(tm
     engine.dispose()
 
 
+def test_customer_concentration_default_and_scan_marker_are_reusable(tmp_path):
+    database = tmp_path / "concentration-scan.db"
+    engine = make_engine(database)
+    upgrade_database(database)
+    default = load_filing_configuration()["customer_concentration_default"]
+    assert default["tags"] == ["us-gaap:ConcentrationRiskPercentage1"]
+    _mark_sec_filing_scanned(engine, "amzn", "acc-1", "customer_concentration_v1")
+    _mark_sec_filing_scanned(engine, "amzn", "acc-1", "customer_concentration_v1")
+    with engine.connect() as connection:
+        count = connection.execute(text("SELECT COUNT(*) FROM sec_filing_scans WHERE scanner='customer_concentration_v1'")).scalar_one()
+    assert count == 1
+    engine.dispose()
+
+
 def test_historical_filing_backfill_is_incremental_and_skips_completed_filings(tmp_path):
     company = next(row for row in load_companies() if row["id"] == "amzn")
     database = tmp_path / "sec-history.db"
@@ -358,6 +372,9 @@ def test_sec_company_group_scores_feed_credit_and_repricing_scenarios(tmp_path):
         financials = {
             "crwv": {"current_debt": 50, "long_term_debt": 50, "debt_maturities_next_12m": 25,
                      "total_assets": 100, "purchase_obligations": 20},
+            # NBIS has no matching tagged maturity schedule in the fixture; its
+            # current debt is used only as a lower-confidence near-term proxy.
+            "nbis": {"current_debt": 25, "long_term_debt": 75},
             "iren": {"current_debt": 20, "long_term_debt": 80, "debt_maturities_next_12m": 10,
                      "total_assets": 100, "purchase_obligations": 20},
             "msft": {"current_debt": 0, "long_term_debt": 100, "debt_maturities_next_12m": 5,
@@ -385,9 +402,10 @@ def test_sec_company_group_scores_feed_credit_and_repricing_scenarios(tmp_path):
     assert catalog["credit_crunch"]["components"][1]["score"] == 25.0
     maturity = next(component for component in catalog["credit_crunch"]["components"] if component["id"] == "refinancing_risk")
     commitments = next(component for component in catalog["credit_crunch"]["components"] if component["id"] == "contractual_commitments")
-    assert maturity["score"] is not None and maturity["coverage"] == 0.5
+    assert maturity["score"] is not None and maturity["coverage"] == 0.5833
     assert commitments["score"] is not None and commitments["coverage"] == 0.5
     assert any("Debt due in next 12 months" in item["source"] for item in maturity["inputs"])
+    assert any("current-debt proxy" in item["source"] for item in maturity["inputs"])
     assert any("Unrecorded purchase obligations / assets" in item["source"] for item in commitments["inputs"])
     assert any(item["source"] == "SEC company scores: neoclouds (3/4 recent)"
                for component in catalog["credit_crunch"]["components"] for item in component["inputs"])
@@ -415,11 +433,12 @@ def test_sec_collection_keeps_cik_verified_company_when_symbol_changed(tmp_path)
             return await collect_sec_financials(engine, "AI Bubble Monitor contact@example.test", client)
 
     result = asyncio.run(run())
-    assert result["status"] == "degraded"
+    assert result["status"] == "ok"
     assert result["series_succeeded"] == 17
     assert result["errors"] == []
-    assert result["warnings"][0]["ticker"] == "DBRG"
-    assert "CIK verified" in result["warnings"][0]["message"]
+    assert result["warnings"] == []
+    assert result["metadata_notices"][0]["ticker"] == "DBRG"
+    assert "verified CIK" in result["metadata_notices"][0]["message"]
     catalog = company_catalog(engine)
     assert sum(item["status"] == "available" for item in catalog) == 17
     engine.dispose()

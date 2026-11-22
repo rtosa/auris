@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import uvicorn
@@ -17,15 +17,18 @@ from sqlalchemy import Engine, text
 from app.database import database_check, make_engine, upgrade_database
 from app.collectors.definitions import load_definitions
 from app.collectors.sec import collect_sec_financials, valid_sec_user_agent
-from app.services.collection import collect_coinpaprika
+from app.collectors.fiscalai import COMPANY_KEYS
+from app.services.collection import collect_coinpaprika, collect_proskauer, collect_fiscalai
 from app.services.collection import (
     collect_fred,
+    collection_start,
     data_health,
     data_sources,
     indicator_catalog,
     next_collection_start,
     next_coinpaprika_start,
     seed_catalog,
+    source_last_success,
 )
 from app.settings import Settings
 from app.services.companies import company_catalog, company_history, load_company_universe
@@ -39,7 +42,7 @@ from app.services.scoring import (
     scenario_history,
 )
 
-APP_VERSION = "0.17.0"
+APP_VERSION = "0.23.0"
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
@@ -61,7 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine = make_engine(app_settings.database_path)
         seed_catalog(engine, definitions)
         application.state.engine = engine
-        if app_settings.fred_api_key or valid_sec_user_agent(app_settings.sec_user_agent):
+        if app_settings.auto_collection_enabled:
             collection_task = asyncio.create_task(periodic_collection())
         yield
         if collection_task is not None:
@@ -87,14 +90,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def run_collection() -> dict[str, object]:
         if engine is None:
             raise HTTPException(status_code=503, detail="database not initialized")
-        if not app_settings.fred_api_key and not valid_sec_user_agent(app_settings.sec_user_agent):
-            raise HTTPException(status_code=409, detail="Configure FRED API key or a descriptive SEC user agent with contact email.")
         async with collection_lock:
             start = next_collection_start(engine, app_settings.historical_window_days, definitions)
             source_results = []
             if app_settings.fred_api_key:
                 source_results.append(await collect_fred(
                     engine, app_settings.fred_api_key, definitions, start,
+                ))
+            if app_settings.fiscal_api_key:
+                fiscal_last = source_last_success(engine, "fiscalai")
+                if fiscal_last is None or datetime.now(UTC) - fiscal_last >= timedelta(hours=20):
+                    source_results.append(await collect_fiscalai(engine, app_settings.fiscal_api_key))
+            proskauer_definitions = [item for item in definitions if item.source == "proskauer" and item.enabled]
+            proskauer_last = source_last_success(engine, "proskauer") if proskauer_definitions else None
+            if proskauer_definitions and (proskauer_last is None or datetime.now(UTC) - proskauer_last >= timedelta(hours=20)):
+                source_results.append(await collect_proskauer(
+                    engine, definitions, collection_start(app_settings.historical_window_days),
                 ))
             crypto_definitions = [item for item in definitions if item.source == "coinpaprika" and item.enabled]
             if crypto_definitions:
@@ -129,14 +140,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logging.getLogger(__name__).exception("Scheduled FRED collection failed")
+                logging.getLogger(__name__).exception("Scheduled data collection failed")
             await asyncio.sleep(app_settings.collection_interval_minutes * 60)
 
     @application.middleware("http")
     async def ingress_security_and_path(request: Request, call_next):
         if app_settings.ingress_mode:
             remote_host = request.client.host if request.client else None
-            if remote_host != "172.30.32.2":
+            local_health_probe = request.url.path == "/api/v1/health" and remote_host in {"127.0.0.1", "::1"}
+            if remote_host != "172.30.32.2" and not local_health_probe:
                 return JSONResponse(status_code=403, content={"detail": "Ingress access only"})
 
             ingress_path = request.headers.get("x-ingress-path", "").rstrip("/")
@@ -251,8 +263,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if engine is None:
             raise HTTPException(status_code=503, detail="database not initialized")
         return {
-            "items": data_sources(engine, bool(app_settings.fred_api_key), valid_sec_user_agent(app_settings.sec_user_agent)),
+            "items": data_sources(engine, bool(app_settings.fred_api_key), valid_sec_user_agent(app_settings.sec_user_agent), bool(app_settings.fiscal_api_key)),
         }
+
+    @application.get("/api/v1/analyst-estimates", tags=["companies"])
+    async def list_analyst_estimates(company_id: str | None = None, days: int = Query(default=365, ge=1, le=3650)) -> dict[str, object]:
+        if engine is None:
+            raise HTTPException(status_code=503, detail="database not initialized")
+        clauses = ["as_of >= :cutoff"]
+        params: dict[str, object] = {"cutoff": (datetime.now(UTC).date() - timedelta(days=days)).isoformat()}
+        if company_id:
+            if company_id not in COMPANY_KEYS:
+                raise HTTPException(status_code=404, detail="company not covered by Fiscal.ai free list")
+            clauses.append("company_id = :company_id")
+            params["company_id"] = company_id
+        with engine.connect() as connection:
+            rows = connection.execute(text("SELECT company_id, currency, period_id, metric, as_of, period_type, report_date, mean, median, high, low, num_estimates, fetched_at FROM analyst_estimates WHERE " + " AND ".join(clauses) + " ORDER BY as_of DESC, company_id, period_id"), params).mappings().all()
+        return {"items": [dict(row) for row in rows], "count": len(rows), "covered_company_count": 8,
+                "attribution": {"text": "Data provided by Zacks Investment Research, Inc., www.zacksdata.com", "url": "https://www.zacksdata.com"},
+                "supported_company_ids": sorted(COMPANY_KEYS)}
 
     @application.get("/api/v1/companies", tags=["companies"])
     async def list_companies() -> dict[str, object]:

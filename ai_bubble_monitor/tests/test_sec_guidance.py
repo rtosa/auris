@@ -109,6 +109,37 @@ def test_guidance_scan_is_idempotent_and_preserves_event_provenance(tmp_path):
     engine.dispose()
 
 
+def test_sec_scan_falls_back_to_named_earnings_press_release(tmp_path):
+    database = tmp_path / "release-fallback.db"
+    engine = make_engine(database)
+    upgrade_database(database)
+    company = next(row for row in load_companies() if row["id"] == "nvda")
+    filing = {"form": "8-K", "filed": "2026-11-18", "report_date": "2026-10-25",
+              "accession": "0001045810-26-000088",
+              "source_url": "https://www.sec.gov/Archives/edgar/data/1045810/000104581026000088/nvda-20261117.htm"}
+
+    class Collector:
+        async def fetch_filing_index(self, _cik, _accession):
+            return {"directory": {"item": [
+                {"name": "nvda-20261117.htm"}, {"name": "q3fy27pr.htm"},
+                {"name": "supplementalfinancialinfor.htm"},
+            ]}}
+
+        async def fetch_filing(self, source_url):
+            assert source_url.endswith("q3fy27pr.htm")
+            return ("<ul><li>Revenue of $115.8 billion, up 103% from a year ago</li>"
+                    "<li>Data Center revenue of $107.6 billion, up 110% from a year ago</li></ul>")
+
+    result = asyncio.run(_scan_capex_guidance_filings(engine, Collector(), company, [filing]))
+    assert result == {"scanned": 1, "events": 1, "pending": 0}
+    with engine.connect() as connection:
+        event = connection.execute(text("SELECT category, guidance_lower, source_url FROM events WHERE category='ai_compute_revenue'")).one()
+    assert event.category == "ai_compute_revenue"
+    assert event.guidance_lower == 107_600_000_000
+    assert event.source_url.endswith("q3fy27pr.htm")
+    engine.dispose()
+
+
 def test_guidance_scan_batches_two_recent_8k_and_6k_filings(tmp_path):
     database = tmp_path / "guidance-batch.db"
     engine = make_engine(database)
@@ -193,4 +224,24 @@ def test_event_catalog_compares_only_matching_company_and_guidance_year(tmp_path
     assert current["revision"]["lower_change_percent"] == 10.0
     assert current["revision"]["upper_change_percent"] == 8.33
     assert first["revision"] is None
+    engine.dispose()
+
+
+def test_event_catalog_collapses_duplicate_ai_disclosures_from_same_exhibit(tmp_path):
+    database = tmp_path / "ai-event-dedup.db"
+    engine = make_engine(database)
+    upgrade_database(database)
+    with engine.begin() as connection:
+        for accession, quote in [("first", "Surrounding text. • Exceeded a $25 billion annual revenue run rate for AWS's AI business."),
+                                 ("second", "Exceeded a $25 billion annual revenue run rate for AWS's AI business.")]:
+            connection.execute(text("""INSERT INTO events (title, summary, company_id, category, published_at,
+                source_url, confidence, guidance_period, guidance_lower, guidance_upper, guidance_unit,
+                source_quote, source_accession)
+                VALUES ('AMZN AI revenue run rate', :quote, 'amzn', 'ai_monetization', '2026-07-30',
+                'https://sec.gov/shared-release', 0.85, '2026-06-30', 25000000000, 25000000000,
+                'USD_annualized', :quote, :accession)"""), {"quote": quote, "accession": accession})
+    result = event_catalog(engine, 10)
+    assert result["count"] == 1
+    assert result["items"][0]["source_accession"] == "second"
+    assert result["items"][0]["revision"] is None
     engine.dispose()

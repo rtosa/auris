@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +9,7 @@ import yaml
 from sqlalchemy import Engine, text
 
 from app.collectors.definitions import IndicatorDefinition
+from app.collectors.fiscalai import COMPANY_KEYS as ANALYST_ESTIMATE_COMPANIES
 from app.indicators.normalization import normalize_series
 from app.services.collection import indicator_catalog
 from app.services.companies import load_company_universe
@@ -113,6 +114,8 @@ def recalculate_scenarios(
     defaults = config["defaults"]
     current_indicators = {item["id"]: item for item in indicator_catalog(engine)}
     current_indicators.update(_company_group_scores(engine))
+    current_indicators.update(_analyst_revision_inputs(engine, defaults))
+    current_indicators.update(_reported_ai_revenue_growth_inputs(engine, defaults))
     calculated_at = datetime.now(UTC).isoformat()
     configured = {**config.get("scenarios", {}), **config.get("composites", {})}
     if scenario_id and scenario_id not in configured:
@@ -232,6 +235,7 @@ def _company_group_metric_scores(
     max_age = int(config.get("max_reporting_age_days", 550))
     minimum_coverage = float(config.get("minimum_group_coverage", 0.5))
     source_confidence = float(config.get("source_confidence", 0.9))
+    maturity_proxy_confidence = float(config.get("maturity_proxy_source_confidence", 0.65))
     maturity_cap = float(config.get("debt_maturity_ratio_cap", 1.0))
     commitment_cap = float(config.get("purchase_obligation_to_assets_ratio_cap", 0.5))
     needed = ("current_debt", "long_term_debt", "total_assets", "debt_maturities_next_12m", "purchase_obligations")
@@ -253,11 +257,12 @@ def _company_group_metric_scores(
     today = date.today()
     for group, members in grouped.items():
         for prefix, description, ratio_cap in metric_specs:
-            scores = []
+            scores: list[tuple[str, float, float, bool]] = []
             for company in members:
                 periods = facts.get(company["id"], {})
                 for end_date in sorted(periods, reverse=True):
                     values = periods[end_date]
+                    proxy_used = False
                     try:
                         age = (today - date.fromisoformat(end_date)).days
                     except ValueError:
@@ -265,28 +270,39 @@ def _company_group_metric_scores(
                     if age < 0 or age > max_age:
                         continue
                     if prefix == "company_maturity_risk":
-                        if not {"current_debt", "long_term_debt", "debt_maturities_next_12m"} <= values.keys():
+                        if not {"current_debt", "long_term_debt"} <= values.keys():
                             continue
                         denominator = values["current_debt"] + values["long_term_debt"]
-                        numerator = values["debt_maturities_next_12m"]
+                        exact = "debt_maturities_next_12m" in values
+                        # The SEC's current portion of debt is a weaker but useful
+                        # proxy for near-term maturities when no maturity schedule
+                        # is tagged in the filing.
+                        numerator = values["debt_maturities_next_12m"] if exact else values["current_debt"]
+                        confidence = source_confidence if exact else maturity_proxy_confidence
+                        proxy_used = not exact
                     else:
                         if not {"total_assets", "purchase_obligations"} <= values.keys():
                             continue
                         denominator = values["total_assets"]
                         numerator = values["purchase_obligations"]
+                        confidence = source_confidence
                     if denominator < 0 or numerator < 0 or (denominator == 0 and numerator > 0):
                         continue
                     ratio = 0.0 if denominator == 0 else numerator / denominator
                     score = max(0.0, min(100.0, ratio / ratio_cap * 100.0)) if ratio_cap > 0 else 0.0
-                    scores.append((company["id"], score))
+                    scores.append((company["id"], score, confidence, proxy_used))
                     break
             share = len(scores) / len(members) if members else 0.0
             key = f"{prefix}:{group}"
-            label = f"SEC {description}: {group} ({len(scores)}/{len(members)} recent)"
+            proxy_count = sum(int(item[3]) for item in scores)
+            label = f"SEC {description}: {group} ({len(scores)}/{len(members)} recent"
+            if prefix == "company_maturity_risk" and proxy_count:
+                label += f"; {proxy_count} current-debt proxy"
+            label += ")"
             outputs[key] = {
                 "id": key,
-                "latest_normalized_value": sum(score for _, score in scores) / len(scores) if scores else None,
-                "normalized_confidence": source_confidence if scores else 0.0,
+                "latest_normalized_value": sum(item[1] for item in scores) / len(scores) if scores else None,
+                "normalized_confidence": sum(item[2] for item in scores) / len(scores) if scores else 0.0,
                 "input_coverage": share,
                 "data_status": "fresh" if share >= minimum_coverage else "stale" if scores else "unavailable",
                 "company_count": len(scores), "group_size": len(members), "source_label": label,
@@ -326,6 +342,7 @@ def _score_components(
                 base_weight *= max(0.0, min(float(value["input_coverage"]), 1.0))
             persisted_indicator_id = None if indicator_id.startswith((
                 "company_group:", "company_maturity_risk:", "company_commitment_risk:",
+                "analyst_revisions_", "ai_monetization_", "ai_compute_",
             )) else indicator_id
             raw_score = value.get("latest_normalized_value") if value else None
             usable = value is not None and value.get("data_status") == "fresh" and raw_score is not None
@@ -361,9 +378,11 @@ def _score_components(
     coverage = min(coverage / total_weight, 1.0)
     reweight = 1.0 / coverage if coverage else float("inf")
     score = weighted_sum / available_weight if available_weight else None
-    confidence = (confidence_sum / available_weight) * coverage if available_weight else 0.0
+    # Coverage and confidence are separate: confidence measures the assessed
+    # reliability of present inputs, while coverage measures how many inputs exist.
+    confidence = confidence_sum / available_weight if available_weight else 0.0
     can_score = score is not None and coverage >= minimum_coverage and reweight <= maximum_reweight_factor
-    status = "unavailable" if not can_score else "available" if coverage == 1.0 and confidence >= float(defaults["minimum_confidence"]) else "low_confidence"
+    status = _score_status(can_score, coverage, confidence, defaults)
     if not can_score:
         score = None
     for row in component_rows:
@@ -383,19 +402,21 @@ def _score_scenario_inputs(spec: dict[str, Any], computed: dict[str, dict[str, A
         confidence = float(source.get("confidence", 0)) if source else 0.0
         components.append({"id": item["id"], "name": item["name"], "weight": float(item["weight"]),
                            "score": score, "confidence": confidence,
-                           "coverage": 1.0 if score is not None else 0.0,
+                           "coverage": float(source.get("coverage", 0)) if score is not None else 0.0,
                            "status": source.get("status", "unavailable") if source else "unavailable"})
     total_weight = sum(item["weight"] for item in components)
     available = [item for item in components if item["score"] is not None]
-    coverage = sum(item["weight"] for item in available) / total_weight if total_weight else 0.0
+    coverage = sum(item["weight"] * item["coverage"] for item in available) / total_weight if total_weight else 0.0
     available_weight = sum(item["weight"] for item in available)
     reweight = 1 / coverage if coverage else float("inf")
     can_score = bool(available) and coverage >= float(spec.get("min_coverage", defaults["minimum_coverage"])) and reweight <= float(spec.get("max_reweight_factor", defaults["maximum_reweight_factor"]))
     score = sum(item["score"] * item["weight"] for item in available) / available_weight if can_score else None
-    confidence = (sum(item["confidence"] * item["weight"] for item in available) / available_weight) * coverage if available else 0.0
-    status = "unavailable" if not can_score else "available" if coverage == 1 and confidence >= float(defaults["minimum_confidence"]) else "low_confidence"
+    confidence = sum(item["confidence"] * item["weight"] for item in available) / available_weight if available else 0.0
+    status = _score_status(can_score, coverage, confidence, defaults)
     rows = [{"component_id": item["id"], "indicator_id": None, "input_ref": item["id"], "normalized_value": item["score"],
-             "base_weight": item["weight"], "weight": item["weight"],
+             # Persist the input's effective coverage weight so the composite
+             # component breakdown preserves the source scenario's coverage.
+             "base_weight": item["weight"] * item["coverage"], "weight": item["weight"] * item["coverage"],
              "contribution": round(item["score"] * item["weight"] / available_weight, 6) if can_score and item["score"] is not None else None}
             for item in components]
     return {"score": round(score, 2) if score is not None else None, "confidence": round(confidence, 4),
@@ -411,6 +432,157 @@ def _append_score(connection, scenario_id: str, result: dict[str, Any], version:
         "coverage": result["coverage"], "version": version, "calculated_at": calculated_at,
         "status": result["status"],
     }).lastrowid)
+
+
+def _score_status(can_score: bool, coverage: float, confidence: float, defaults: dict[str, Any]) -> str:
+    if not can_score:
+        return "unavailable"
+    if confidence < float(defaults["minimum_confidence"]):
+        return "low_confidence"
+    if coverage < float(defaults.get("status_coverage_threshold", 0.80)):
+        return "partial_coverage"
+    return "available"
+
+
+def _analyst_revision_inputs(engine: Engine, defaults: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Turn point-in-time consensus revisions into a directional risk proxy."""
+    supported = sorted(ANALYST_ESTIMATE_COMPANIES)
+    today = date.today()
+    with engine.connect() as connection:
+        rows = connection.execute(text("""SELECT company_id, period_id, metric, as_of, period_type,
+                report_date, mean FROM analyst_estimates
+            WHERE metric IN ('analyst_eps', 'analyst_revenue') AND mean IS NOT NULL
+            ORDER BY company_id, period_id, metric, as_of""")).mappings().all()
+    series: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        series.setdefault((str(row["company_id"]), str(row["period_id"]), str(row["metric"])), []).append(dict(row))
+
+    company_risks: list[float] = []
+    latest_snapshot: date | None = None
+    for company_id in supported:
+        eps_periods = [key[1] for key in series if key[0] == company_id and key[2] == "analyst_eps"]
+        candidates = []
+        for period_id in dict.fromkeys(eps_periods):
+            snapshots = series.get((company_id, period_id, "analyst_eps"), [])
+            if not snapshots:
+                continue
+            current = snapshots[-1]
+            try:
+                report_date = date.fromisoformat(str(current["report_date"])) if current["report_date"] else None
+            except ValueError:
+                report_date = None
+            candidates.append((period_id, current, report_date))
+        if not candidates:
+            continue
+        upcoming_quarters = [item for item in candidates if item[2] and item[2] >= today
+                             and "quarter" in str(item[1]["period_type"] or "").lower()]
+        selected = min(upcoming_quarters, key=lambda item: item[2]) if upcoming_quarters else max(
+            candidates, key=lambda item: str(item[1]["as_of"]),
+        )
+        period_id = selected[0]
+        company_changes: list[float] = []
+        for metric in ("analyst_eps", "analyst_revenue"):
+            snapshots = series.get((company_id, period_id, metric), [])
+            if len(snapshots) < 2:
+                continue
+            current = snapshots[-1]
+            try:
+                current_date = date.fromisoformat(str(current["as_of"]))
+                current_mean = float(current["mean"])
+            except (ValueError, TypeError):
+                continue
+            if current_mean == 0 or current_date > today or (today - current_date).days > 30:
+                continue
+            for horizon in (30, 90):
+                target = current_date - timedelta(days=horizon)
+                prior = [row for row in snapshots[:-1] if str(row["as_of"]) <= target.isoformat()]
+                if not prior:
+                    continue
+                previous = prior[-1]
+                try:
+                    previous_date = date.fromisoformat(str(previous["as_of"]))
+                    previous_mean = float(previous["mean"])
+                except (ValueError, TypeError):
+                    continue
+                if previous_mean == 0 or (target - previous_date).days > 30:
+                    continue
+                change_percent = (current_mean - previous_mean) / abs(previous_mean) * 100
+                # Heuristic, not calibrated: +10% revisions map to 0 risk and
+                # -10% map to 100, with a linear transition in between.
+                company_changes.append(max(0.0, min(100.0, 50.0 - 5.0 * change_percent)))
+                latest_snapshot = max(latest_snapshot or current_date, current_date)
+        if company_changes:
+            ordered = sorted(company_changes)
+            middle = len(ordered) // 2
+            company_risks.append(ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2)
+
+    share = len(company_risks) / len(supported) if supported else 0.0
+    ordered = sorted(company_risks)
+    middle = len(ordered) // 2
+    score = (ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2) if ordered else None
+    status = "fresh" if share >= 0.5 and score is not None else "unavailable"
+    confidence = float(defaults.get("source_confidence", {}).get("fiscalai", 0.75)) if score is not None else 0.0
+    label = (f"Fiscal.ai/Zacks EPS and revenue revisions ({len(company_risks)}/{len(supported)} tracked companies; "
+             f"latest usable snapshot {latest_snapshot or 'none'})")
+    return {"analyst_revisions_risk": {"id": "analyst_revisions_risk", "latest_normalized_value": score if status == "fresh" else None,
+            "normalized_confidence": confidence, "input_coverage": share, "data_status": status,
+            "source_label": label}}
+
+
+def _reported_ai_revenue_growth_inputs(engine: Engine, defaults: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Score only comparable, issuer-reported AI revenue disclosures; sparse evidence stays unavailable."""
+    scopes = {
+        "ai_monetization_growth_risk": ("ai_monetization", sorted(ANALYST_ESTIMATE_COMPANIES), "AI business revenue"),
+        "ai_compute_revenue_growth_risk": ("ai_compute_revenue", ["nvda", "amd"], "Data Center/AI compute revenue"),
+    }
+    result: dict[str, dict[str, Any]] = {}
+    with engine.connect() as connection:
+        for input_id, (category, universe, description) in scopes.items():
+            rows = connection.execute(text("""SELECT company_id, published_at, guidance_period,
+                    guidance_lower, guidance_upper, guidance_unit, confidence FROM events
+                WHERE category=:category AND guidance_lower IS NOT NULL AND guidance_upper IS NOT NULL
+                ORDER BY published_at, id"""), {"category": category}).mappings().all()
+            by_company: dict[str, list[dict[str, Any]]] = {}
+            for row in rows:
+                if row["company_id"] in universe and row["guidance_unit"] in {"USD_reported_period", "USD_annualized"}:
+                    by_company.setdefault(str(row["company_id"]), []).append(dict(row))
+            company_risks: list[float] = []
+            quality: list[float] = []
+            for company_id in universe:
+                observations = by_company.get(company_id, [])
+                if len(observations) < 2:
+                    continue
+                current = observations[-1]
+                previous = next((item for item in reversed(observations[:-1])
+                                  if item["guidance_unit"] == current["guidance_unit"]
+                                  and item["guidance_period"] != current["guidance_period"]), None)
+                if previous is None:
+                    continue
+                try:
+                    current_date = date.fromisoformat(str(current["published_at"])[:10])
+                    previous_date = date.fromisoformat(str(previous["published_at"])[:10])
+                    current_value = (float(current["guidance_lower"]) + float(current["guidance_upper"])) / 2
+                    previous_value = (float(previous["guidance_lower"]) + float(previous["guidance_upper"])) / 2
+                except (TypeError, ValueError):
+                    continue
+                gap = (current_date - previous_date).days
+                if not 30 <= gap <= 400 or (date.today() - current_date).days > 200 or previous_value <= 0:
+                    continue
+                growth_percent = (current_value / previous_value - 1) * 100
+                # Growth is translated to a simple directional risk score; this
+                # remains an uncalibrated proxy, with issuer weights kept equal.
+                company_risks.append(max(0.0, min(100.0, 50.0 - growth_percent)))
+                quality.append(float(current["confidence"] or defaults.get("source_confidence", {}).get("sec_event", 0.85)))
+            share = len(company_risks) / len(universe) if universe else 0.0
+            ordered = sorted(company_risks)
+            middle = len(ordered) // 2
+            score = (ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2) if ordered else None
+            usable = score is not None and share >= 0.5
+            result[input_id] = {"id": input_id, "latest_normalized_value": score if usable else None,
+                "normalized_confidence": sum(quality) / len(quality) if usable else 0.0,
+                "input_coverage": share, "data_status": "fresh" if usable else "unavailable",
+                "source_label": f"SEC reported {description} growth ({len(company_risks)}/{len(universe)} tracked issuers; comparable dated disclosures)"}
+    return result
 
 
 def _append_components(connection, score_id: int, rows: list[dict[str, Any]]) -> None:

@@ -39,6 +39,14 @@ def test_fred_key_environment_overrides_options(tmp_path, monkeypatch):
     assert Settings.load().fred_api_key == "environment-key"
 
 
+def test_fiscal_key_reads_options_and_environment_overrides(tmp_path, monkeypatch):
+    (tmp_path / "options.json").write_text(json.dumps({"fiscal_api_key": "options-key"}), encoding="utf-8")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    assert Settings.load().fiscal_api_key == "options-key"
+    monkeypatch.setenv("FISCAL_API_KEY", "environment-key")
+    assert Settings.load().fiscal_api_key == "environment-key"
+
+
 def test_settings_reject_invalid_interval(tmp_path, monkeypatch):
     (tmp_path / "options.json").write_text(
         json.dumps({"scoring_interval_minutes": 1}), encoding="utf-8"
@@ -47,3 +55,21 @@ def test_settings_reject_invalid_interval(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="scoring_interval_minutes"):
         Settings.load()
+
+
+def test_auto_collection_can_be_disabled_for_maintenance(tmp_path, monkeypatch):
+    (tmp_path / "options.json").write_text(json.dumps({"auto_collection_enabled": False}), encoding="utf-8")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    assert Settings.load().auto_collection_enabled is False
+
+
+def test_auto_collection_is_enabled_by_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    assert Settings.load().auto_collection_enabled is True
+
+
+def test_auto_collection_environment_value_overrides_options(tmp_path, monkeypatch):
+    (tmp_path / "options.json").write_text(json.dumps({"auto_collection_enabled": True}), encoding="utf-8")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("AUTO_COLLECTION_ENABLED", "false")
+    assert Settings.load().auto_collection_enabled is False

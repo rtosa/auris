@@ -11,6 +11,8 @@ from sqlalchemy import Engine, text
 from app.collectors.definitions import IndicatorDefinition
 from app.collectors.coinpaprika import CoinPaprikaCollector
 from app.collectors.fred import CollectorError, FredCollector, Observation
+from app.collectors.proskauer import ProskauerCollector
+from app.collectors.fiscalai import COMPANY_KEYS, FiscalAICollector, collect_fiscalai
 
 LOGGER = logging.getLogger(__name__)
 FRED_SOURCE = {
@@ -28,6 +30,14 @@ SEC_SOURCE = {
     "id": "sec", "name": "SEC EDGAR", "source_type": "financial_filings_api",
     "endpoint": "https://data.sec.gov/submissions/", "enabled": True,
 }
+PROSKAUER_SOURCE = {
+    "id": "proskauer", "name": "Proskauer Private Credit Default Index",
+    "source_type": "public_html_release", "endpoint": "https://www.proskauer.com/browse-insights?primary_type=8", "enabled": True,
+}
+FISCALAI_SOURCE = {
+    "id": "fiscalai", "name": "Fiscal.ai Street Consensus (Zacks)",
+    "source_type": "analyst_estimates_api", "endpoint": "https://api.fiscal.ai/v1/company/estimates/street", "enabled": True,
+}
 
 
 def seed_catalog(engine: Engine, definitions: list[IndicatorDefinition]) -> None:
@@ -35,6 +45,8 @@ def seed_catalog(engine: Engine, definitions: list[IndicatorDefinition]) -> None
         "fred": ({**FRED_SOURCE}, {"series_count": sum(item.enabled and item.source == "fred" for item in definitions)}),
         "coinpaprika": ({**COINPAPRIKA_SOURCE}, {"series_count": sum(item.enabled and item.source == "coinpaprika" for item in definitions)}),
         "sec": ({**SEC_SOURCE}, {"company_count": 17}),
+        "proskauer": ({**PROSKAUER_SOURCE}, {"series_count": sum(item.enabled and item.source == "proskauer" for item in definitions)}),
+        "fiscalai": ({**FISCALAI_SOURCE}, {"company_count": len(COMPANY_KEYS), "history": "current_calendar_year_on_free_plan"}),
     }
     with engine.begin() as connection:
         for source_id, (source, configuration) in source_configurations.items():
@@ -180,6 +192,37 @@ async def collect_coinpaprika(
             "completed_at": now.isoformat(), "errors": errors}
 
 
+async def collect_proskauer(
+    engine: Engine, definitions: list[IndicatorDefinition], observation_start: date,
+    client: httpx.AsyncClient | None = None,
+) -> dict[str, Any]:
+    collector = ProskauerCollector(client=client)
+    observations: list[Observation] = []
+    errors: list[dict[str, str]] = []
+    requested = [item for item in definitions if item.source == "proskauer" and item.enabled]
+    for definition in requested:
+        try:
+            observations.extend(await collector.fetch_series(definition, observation_start))
+        except CollectorError as exc:
+            errors.append({"series_id": definition.source_id, "message": str(exc)})
+    now = datetime.now(UTC)
+    if observations:
+        _upsert_observations(engine, "proskauer", observations, now)
+    succeeded = len(requested) - len(errors)
+    error_summary = "; ".join(f"{item['series_id']}: {item['message']}" for item in errors) or None
+    with engine.begin() as connection:
+        if succeeded:
+            connection.execute(text("UPDATE data_sources SET last_success=:now, last_error=:error WHERE id='proskauer'"),
+                               {"now": now.isoformat(), "error": error_summary})
+        else:
+            connection.execute(text("UPDATE data_sources SET last_error=:error WHERE id='proskauer'"),
+                               {"error": error_summary or "No Proskauer series were requested"})
+    return {"source_id": "proskauer", "status": "failed" if not succeeded else "degraded" if errors else "ok",
+            "series_requested": len(requested), "series_succeeded": succeeded,
+            "observations_received": len(observations), "observation_start": observation_start.isoformat(),
+            "completed_at": now.isoformat(), "errors": errors}
+
+
 def _upsert_observations(engine: Engine, source_id: str, observations: list[Observation], now: datetime) -> None:
     rows = [{"source_id": source_id, "indicator_id": item.indicator_id,
              "observation_date": item.observation_date.isoformat(), "fetched_at": now.isoformat(),
@@ -195,6 +238,15 @@ def _upsert_observations(engine: Engine, source_id: str, observations: list[Obse
 
 def collection_start(days: int) -> date:
     return (datetime.now(UTC) - timedelta(days=days)).date()
+
+
+def source_last_success(engine: Engine, source_id: str) -> datetime | None:
+    with engine.connect() as connection:
+        value = connection.execute(text("SELECT last_success FROM data_sources WHERE id=:id"), {"id": source_id}).scalar_one_or_none()
+    if value is None:
+        return None
+    parsed = datetime.fromisoformat(str(value))
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
 
 
 def next_collection_start(
@@ -291,7 +343,7 @@ def indicator_catalog(engine: Engine) -> list[dict[str, Any]]:
     return result
 
 
-def data_sources(engine: Engine, fred_configured: bool, sec_configured: bool = False) -> list[dict[str, Any]]:
+def data_sources(engine: Engine, fred_configured: bool, sec_configured: bool = False, fiscalai_configured: bool = False) -> list[dict[str, Any]]:
     with engine.connect() as connection:
         rows = connection.execute(
             text("SELECT id, name, source_type, endpoint, enabled, last_success, last_error FROM data_sources ORDER BY id")
@@ -299,7 +351,7 @@ def data_sources(engine: Engine, fred_configured: bool, sec_configured: bool = F
     results = []
     for row in rows:
         source = dict(row)
-        if source["id"] == "fred" and not fred_configured or source["id"] == "sec" and not sec_configured:
+        if source["id"] == "fred" and not fred_configured or source["id"] == "sec" and not sec_configured or source["id"] == "fiscalai" and not fiscalai_configured:
             source["status"] = "unconfigured"
         elif source["last_error"] and source["last_success"]:
             source["status"] = "degraded"
@@ -309,7 +361,7 @@ def data_sources(engine: Engine, fred_configured: bool, sec_configured: bool = F
             source["status"] = "ready"
         else:
             source["status"] = "pending"
-        source["configured"] = fred_configured if source["id"] == "fred" else sec_configured if source["id"] == "sec" else True
+        source["configured"] = fred_configured if source["id"] == "fred" else sec_configured if source["id"] == "sec" else fiscalai_configured if source["id"] == "fiscalai" else True
         results.append(source)
     return results
 

@@ -1,6 +1,6 @@
 name: AI Bubble Monitor
 slug: ai_bubble_monitor
-version: 0.17.0
+version: 0.23.0
 description: Local AI risk monitor with explainable scenario scores
 arch:
   - amd64
@@ -17,13 +17,17 @@ options:
   log_level: info
   collection_interval_minutes: 60
   scoring_interval_minutes: 60
+  auto_collection_enabled: true
   fred_api_key: ""
+  fiscal_api_key: ""
   sec_user_agent: ""
   historical_window_days: 1825
 schema:
   log_level: list(debug|info|warning|error)
   collection_interval_minutes: int(15,1440)
   scoring_interval_minutes: int(15,1440)
+  auto_collection_enabled: bool
   fred_api_key: password
+  fiscal_api_key: password
   sec_user_agent: str
   historical_window_days: int(365,3650)

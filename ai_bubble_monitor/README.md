@@ -4,11 +4,11 @@ Local-first Home Assistant app for monitoring financial sustainability and syste
 
 ## Current functionality
 
-The app loads 20 active indicators: 18 FRED macro, market, energy, credit, and activity series plus Bitcoin and Ethereum daily USD prices from CoinPaprika. FRED collects five years of observations on first run and refreshes recent observations hourly. CoinPaprika provides one year of daily history plus the current ticker price. Raw observations, original observation dates, missing values, and provider payloads are stored in SQLite. Indicator values are normalized deterministically to 0–100 using their configured risk direction and a 60-observation minimum. Four scenario scores and two composite indices use explicit coverage and confidence; unavailable inputs are never treated as zero. Historical snapshots are append-only.
+The app loads 24 active indicators: 21 FRED macro, market, energy, credit, activity, and liquidity series, two CoinPaprika crypto prices, and one contextual Proskauer private-credit series. FRED collects five years of observations on first run and refreshes recent observations hourly. CoinPaprika provides one year of daily history plus the current ticker price. Raw observations, original observation dates, missing values, and provider payloads are stored in SQLite. Indicator values are normalized deterministically to 0–100 using their configured risk direction and a source-specific minimum history. Four scenario scores and two composite indices use explicit coverage and confidence; unavailable inputs are never treated as zero. Historical snapshots are append-only.
 
 SEC EDGAR ingestion now covers the PRD's 17 public companies, preserves filing and fiscal provenance, and converts cumulative Q2/Q3 cash-flow facts to quarter values where prior YTD filings are available. Live collection requires a descriptive SEC User-Agent with a contact email in `SEC_USER_AGENT` or the `sec_user_agent` app option. Company scores use a versioned weighted model with debt, liquidity, lease, CAPEX/FCF, and interest coverage components from a shared reporting date; daily score history is exposed in the dashboard and API. Scenario summaries also include 7/30/90-day changes, a 30-day persistence check, and daily history sparklines. Backtesting awaits point-in-time inputs and outcome labels.
 
-The SEC collector incrementally scans up to six recent 8-K/6-K filings per issuer (two per collection cycle) for explicit numeric CAPEX outlook, retains the quoted text and filing link, and shows supported disclosures under Latest risk events. Same-company, same-year guidance updates are compared with the previous disclosure. This prototype is not included in scoring; unstructured or ambiguous guidance stays unavailable.
+The SEC collector incrementally scans up to six recent 8-K/6-K filings per issuer (two per collection cycle) for explicit numeric CAPEX outlook and directly attributed AI / Data Center revenue evidence, retains the quoted text and filing link, and shows supported disclosures under Latest risk events. Comparable same-company disclosures are linked. These events are evidence only and are not included in scoring; unstructured or ambiguous statements stay unavailable. Proskauer's headline private-credit default series is market context only and is also unscored.
 
 
 ## Install in Home Assistant OS
@@ -29,7 +29,7 @@ docker compose up --build -d
 
 Open `http://localhost:8099`. Check `http://localhost:8099/api/v1/health` and `http://localhost:8099/docs`. Local database files are stored under `dev-data/` and are ignored by Git.
 
-To enable live FRED collection locally, copy `.env.example` to `.env` and set `FRED_API_KEY` to a free key from [FRED](https://fred.stlouisfed.org/docs/api/api_key.html). Compose reads `.env`; the file is ignored by Git. The app runs an initial backfill and then collects on the configured interval. You can also trigger a collection with `POST /api/v1/admin/collect`.
+To enable live FRED collection locally, copy `.env.example` to `.env` and set `FRED_API_KEY` to a free key from [FRED](https://fred.stlouisfed.org/docs/api/api_key.html). To enable Fiscal.ai, set `FISCAL_API_KEY` too. CoinPaprika and Proskauer provide public context feeds without keys. Compose reads `.env`; the file is ignored by Git. Automatic collection runs on startup and on the configured interval. You can pause it with `AUTO_COLLECTION_ENABLED=false` or trigger a collection with `POST /api/v1/admin/collect`.
 
 Indicator and scoring configuration is in `config/indicators.yaml` and `config/scoring.yaml`. The API exposes `/api/v1/indicators`, `/api/v1/indicators/{id}/history`, `/api/v1/scenarios`, `/api/v1/scenarios/{id}/history`, `/api/v1/fragility`, `/api/v1/stress`, `/api/v1/data-sources`, and `/api/v1/data-health`. `POST /api/v1/admin/recalculate` reruns normalization and scoring. Scenario inputs and limitations are documented in `DOCS.md`.
 
@@ -41,7 +41,19 @@ docker compose --profile test run --build --rm backend-tests
 
 ## Configuration
 
-The Home Assistant options schema exposes `log_level`, collection and scoring intervals, `fred_api_key`, and `historical_window_days`. The FRED key is free; CoinPaprika's public endpoint needs no key. The dashboard credits CoinPaprika.
+The Home Assistant options schema exposes `log_level`, collection and scoring intervals, automatic collection, `fred_api_key`, `fiscal_api_key`, and `historical_window_days`. CoinPaprika and Proskauer public context feeds can run without API keys.
+
+Docker checks `/api/v1/health` and restarts the process according to the Compose restart policy. The local SQLite database persists in `dev-data/`. To create a consistent standalone backup while the app is running:
+
+```sh
+docker compose exec -T ai-bubble-monitor python -c "import sqlite3; source=sqlite3.connect('/data/ai_bubble_monitor.db'); target=sqlite3.connect('/data/ai_bubble_monitor.backup.db'); source.backup(target); target.close(); source.close()"
+```
+
+The backup appears at `dev-data/ai_bubble_monitor.backup.db`; copy it outside the repository for safekeeping. To restore it, stop the container first and replace `dev-data/ai_bubble_monitor.db`, then start the container again.
+
+Fiscal.ai Street Consensus is optional and stored separately from market indicators. Configure `FISCAL_API_KEY` in local `.env` or `fiscal_api_key` in Home Assistant options. Its free key has a restricted company list and current-calendar-year revision history; plan entitlements may exclude Zacks Street Consensus. The API requires this attribution wherever estimates are displayed: “Data provided by Zacks Investment Research, Inc., www.zacksdata.com”. Use `GET /api/v1/analyst-estimates` to inspect collected snapshots. Dated EPS and revenue consensus revisions now feed the earnings-revisions components as an uncalibrated directional proxy; the dashboard continues to show the underlying 30/90-day changes.
+
+The dashboard's Analyst estimate revisions panel shows the next reported quarter's EPS and revenue consensus for supported companies, with 30- and 90-day changes versus prior dated snapshots and the latest analyst counts. Missing prior snapshots are shown as unavailable. Zacks attribution links directly to its site.
 
 In Home Assistant mode, the service accepts requests only from the Supervisor Ingress proxy (`172.30.32.2`). The standalone Compose setup binds to `127.0.0.1` and disables that proxy check for local development.
 

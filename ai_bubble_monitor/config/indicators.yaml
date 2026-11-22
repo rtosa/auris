@@ -1,5 +1,19 @@
 version: 1
 indicators:
+  - id: private_credit_default_rate
+    name: Proskauer Private Credit Default Rate
+    category: private_credit_context
+    unit: percent
+    frequency: quarterly
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: proskauer
+    source_id: headline_default_rate
+    staleness_days: 150
+    lookback_days: 1825
+    minimum_observations: 4
+    availability_note: "Quarterly US senior-secured/unitranche private-credit headline rate. Market context only; not AI-specific and excluded from scenario scoring pending a longer validated history."
+    scenarios: {}
   - id: sp500
     name: S&P 500
     category: equity
@@ -156,8 +170,47 @@ indicators:
     normalization_method: rolling_percentile
     source: fred
     source_id: DTWEXBGS
-    staleness_days: 7
+    # FRED's H.10 release updates weekly even though observations are daily.
+    staleness_days: 14
     scenarios: {prolonged_repricing: 0.05, credit_crunch: 0.1, macro_crisis: 0.15}
+  - id: fed_reserve_balances
+    name: Federal Reserve Bank Reserve Balances
+    category: liquidity
+    unit: millions_usd
+    frequency: weekly
+    direction: higher_is_better
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: WRESBAL
+    staleness_days: 14
+    minimum_observations: 60
+    availability_note: "Direct reserve-balance observation from the Fed H.4.1 release; one component of the liquidity measure."
+    scenarios: {macro_crisis: 0.06, credit_crunch: 0.03}
+  - id: treasury_general_account
+    name: US Treasury General Account
+    category: liquidity
+    unit: millions_usd
+    frequency: weekly
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: WTREGEN
+    staleness_days: 14
+    minimum_observations: 60
+    availability_note: "Higher Treasury cash balances tend to drain reserve liquidity; interpret with the other liquidity series."
+    scenarios: {macro_crisis: 0.03, credit_crunch: 0.015}
+  - id: overnight_reverse_repo
+    name: Federal Reserve Overnight Reverse Repo
+    category: liquidity
+    unit: billions_usd
+    frequency: daily
+    direction: higher_is_worse
+    normalization_method: rolling_percentile
+    source: fred
+    source_id: RRPONTSYD
+    staleness_days: 7
+    availability_note: "Overnight reverse-repo facility usage in billions of dollars; interpreted as a liquidity context series."
+    scenarios: {macro_crisis: 0.03, credit_crunch: 0.015}
   - id: cpi_index
     name: US Consumer Price Index (seasonally adjusted)
     category: inflation

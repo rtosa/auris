@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import aurisMark from "./auris-mark.svg?url";
 
 type Health = {
   status: string;
@@ -43,6 +44,26 @@ type DataSource = {
   last_error: string | null;
 };
 
+type AnalystEstimate = {
+  company_id: string;
+  currency: string | null;
+  period_id: string;
+  metric: string;
+  as_of: string;
+  period_type: string | null;
+  report_date: string | null;
+  mean: number | null;
+  num_estimates: number | null;
+};
+
+type AnalystEstimateResponse = {
+  items: AnalystEstimate[];
+  count: number;
+  covered_company_count: number;
+  attribution: { text: string; url: string };
+  supported_company_ids: string[];
+};
+
 type CompanyMetric = {
   value: number;
   unit: string;
@@ -68,8 +89,8 @@ type Company = {
 
 type RiskEvent = {
   id: number; title: string; summary: string; company_id: string; category: string; published_at: string;
-  source_url: string; confidence: number; guidance_period: string | null; guidance_lower: number;
-  guidance_upper: number; guidance_unit: string; source_quote: string; source_accession: string;
+  source_url: string; confidence: number; guidance_period: string | null; guidance_lower: number | null;
+  guidance_upper: number | null; guidance_unit: string; source_quote: string; source_accession: string;
   revision: { previous_published_at: string; previous_source_url: string; previous_source_accession: string;
     previous_guidance_lower: number; previous_guidance_upper: number; lower_change_percent: number | null;
     upper_change_percent: number | null } | null;
@@ -81,7 +102,7 @@ type Scenario = {
   score: number | null;
   confidence: number;
   coverage: number;
-  status: "pending" | "available" | "low_confidence" | "unavailable";
+  status: "pending" | "available" | "partial_coverage" | "low_confidence" | "unavailable";
   classification: string | null;
   calculated_at: string | null;
   components: { id: string; name: string; score: number | null; contribution: number; coverage: number; status: string }[];
@@ -122,10 +143,68 @@ function formatValue(value: number | null, unit: string): string {
   return number;
 }
 
+function formatConsensus(value: number | null, currency: string | null, compact = false): string {
+  if (value === null || value === undefined) return "—";
+  const code = currency && /^[A-Z]{3}$/.test(currency) ? currency : "USD";
+  return new Intl.NumberFormat(undefined, {
+    style: "currency", currency: code, notation: compact ? "compact" : "standard",
+    maximumFractionDigits: compact ? 1 : 2,
+  }).format(value);
+}
+
+function latestMetric(items: AnalystEstimate[], metric: string): AnalystEstimate | null {
+  return items.filter((item) => item.metric === metric).sort((a, b) => b.as_of.localeCompare(a.as_of))[0] ?? null;
+}
+
+function consensusRevision(items: AnalystEstimate[], metric: string, days: number, periodId: string): number | null {
+  const periodItems = items.filter((item) => item.period_id === periodId);
+  const latest = latestMetric(periodItems, metric);
+  if (!latest || latest.mean === null) return null;
+  const target = new Date(`${latest.as_of}T00:00:00Z`).getTime() - days * 86400000;
+  const previous = periodItems.filter((item) => item.metric === metric && item.mean !== null &&
+    new Date(`${item.as_of}T00:00:00Z`).getTime() <= target)
+    .sort((a, b) => b.as_of.localeCompare(a.as_of))[0];
+  if (!previous || previous.mean === null || previous.mean === 0) return null;
+  return ((latest.mean - previous.mean) / Math.abs(previous.mean)) * 100;
+}
+
+function RevisionLabel({ value }: { value: number | null }) {
+  if (value === null || !Number.isFinite(value)) return <span className="revision-missing">—</span>;
+  return <span className={`revision-value ${value < 0 ? "revision-negative" : value > 0 ? "revision-positive" : ""}`}>{value > 0 ? "+" : ""}{value.toFixed(1)}%</span>;
+}
+
+function revisionBreadth(values: (number | null)[]) {
+  const changes = values.filter((value): value is number => value !== null && Number.isFinite(value));
+  const sorted = [...changes].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  const median = sorted.length === 0 ? null : sorted.length % 2
+    ? sorted[middle]
+    : (sorted[middle - 1] + sorted[middle]) / 2;
+  return {
+    available: changes.length,
+    raised: changes.filter((value) => value >= 0.05).length,
+    cut: changes.filter((value) => value <= -0.05).length,
+    flat: changes.filter((value) => Math.abs(value) < 0.05).length,
+    median,
+  };
+}
+
 function yearOverYearLabel(metric: CompanyMetric | undefined): string {
   const change = metric?.year_over_year?.change_percent;
   if (change === null || change === undefined) return "YoY unavailable";
   return `${change > 0 ? "+" : ""}${change.toFixed(1)}% YoY`;
+}
+
+function scenarioDescription(id: string): string {
+  const descriptions: Record<string, string> = {
+    boom_continuation: "AI investment and company growth keep accelerating.",
+    prolonged_repricing: "Markets revalue AI leaders as rates and expectations shift.",
+    credit_crunch: "Funding stress spreads from AI builders to lenders.",
+    macro_crisis: "Broad economic, inflation, and credit stress intensifies.",
+    fragility_index: "Combined vulnerability across AI companies and markets.",
+    current_stress_index: "Current market and credit stress across key indicators.",
+  };
+  return descriptions[id] ?? "Evidence signals associated with this risk scenario.";
 }
 
 function YearOverYearLine({ metric }: { metric: CompanyMetric | undefined }) {
@@ -148,6 +227,7 @@ export function Dashboard() {
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [events, setEvents] = useState<RiskEvent[]>([]);
+  const [analystEstimates, setAnalystEstimates] = useState<AnalystEstimateResponse | null>(null);
   const [state, setState] = useState<LoadState>("loading");
   const [collecting, setCollecting] = useState(false);
   const [collectionMessage, setCollectionMessage] = useState("");
@@ -156,7 +236,7 @@ export function Dashboard() {
   async function refresh() {
     setState("loading");
     try {
-      const [nextHealth, catalog, nextDataHealth, sourceList, scenarioList, companyList, eventList] = await Promise.all([
+      const [nextHealth, catalog, nextDataHealth, sourceList, scenarioList, companyList, eventList, estimates] = await Promise.all([
         readJson<Health>("health"),
         readJson<{ items: Indicator[] }>("indicators"),
         readJson<DataHealth>("data-health"),
@@ -164,6 +244,7 @@ export function Dashboard() {
         readJson<{ items: Scenario[] }>("scenarios"),
         readJson<{ items: Company[] }>("companies"),
         readJson<{ items: RiskEvent[] }>("events?limit=20"),
+        readJson<AnalystEstimateResponse>("analyst-estimates?days=365"),
       ]);
       setHealth(nextHealth);
       setIndicators(catalog.items);
@@ -172,6 +253,7 @@ export function Dashboard() {
       setScenarios(scenarioList.items);
       setCompanies(companyList.items);
       setEvents(eventList.items);
+      setAnalystEstimates(estimates);
       setState("ready");
     } catch {
       setState("error");
@@ -203,26 +285,107 @@ export function Dashboard() {
   const fred = sources.find((source) => source.id === "fred");
   const coinpaprika = sources.find((source) => source.id === "coinpaprika");
   const sec = sources.find((source) => source.id === "sec");
+  const fiscalai = sources.find((source) => source.id === "fiscalai");
   const collectionAvailable = Boolean(fred?.configured || coinpaprika?.configured);
   const dataReady = state === "ready" && Boolean(health?.database.ok);
   const coverage = dataHealth?.active_indicators
     ? Math.round((dataHealth.fresh_indicators / dataHealth.active_indicators) * 100)
     : 0;
+  const rankedScenarios = scenarios.filter((scenario) => scenario.score !== null)
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  const leadingScenario = rankedScenarios[0] ?? null;
+  const stressScenario = scenarios.find((scenario) => scenario.id === "current_stress_index") ?? null;
+  const fragilityScenario = scenarios.find((scenario) => scenario.id === "fragility_index") ?? null;
+  const analystRows = useMemo(() => {
+    if (!analystEstimates) return [];
+    const today = new Date().toISOString().slice(0, 10);
+    return analystEstimates.supported_company_ids.map((companyId) => {
+      const company = companies.find((item) => item.id === companyId);
+      const companyItems = analystEstimates.items.filter((item) => item.company_id === companyId);
+      const periods = new Map<string, AnalystEstimate>();
+      for (const item of companyItems) {
+        if (item.metric !== "analyst_eps" || !item.report_date || !item.period_id) continue;
+        const current = periods.get(item.period_id);
+        if (!current || item.as_of > current.as_of) periods.set(item.period_id, item);
+      }
+      const upcoming = [...periods.values()].filter((item) => item.report_date! >= today)
+        .sort((a, b) => a.report_date!.localeCompare(b.report_date!));
+      const period = upcoming.find((item) => item.period_type?.toLowerCase() === "quarterly") ?? upcoming[0] ??
+        [...periods.values()].sort((a, b) => b.as_of.localeCompare(a.as_of))[0] ?? null;
+      const periodItems = period ? companyItems.filter((item) => item.period_id === period.period_id) : [];
+      const eps = latestMetric(periodItems, "analyst_eps");
+      const revenue = latestMetric(periodItems, "analyst_revenue");
+      const dates = [eps?.as_of, revenue?.as_of].filter((value): value is string => Boolean(value)).sort();
+      return {
+        id: companyId,
+        name: company?.name ?? companyId.toUpperCase(),
+        ticker: company?.ticker ?? companyId.toUpperCase(),
+        period,
+        eps,
+        revenue,
+        eps30: period ? consensusRevision(periodItems, "analyst_eps", 30, period.period_id) : null,
+        eps90: period ? consensusRevision(periodItems, "analyst_eps", 90, period.period_id) : null,
+        revenue30: period ? consensusRevision(periodItems, "analyst_revenue", 30, period.period_id) : null,
+        revenue90: period ? consensusRevision(periodItems, "analyst_revenue", 90, period.period_id) : null,
+        latestDate: dates.at(-1) ?? null,
+      };
+    });
+  }, [analystEstimates, companies]);
+  const analystBreadth = useMemo(() => ({
+    eps30: revisionBreadth(analystRows.map((row) => row.eps30)),
+    eps90: revisionBreadth(analystRows.map((row) => row.eps90)),
+    revenue30: revisionBreadth(analystRows.map((row) => row.revenue30)),
+    revenue90: revisionBreadth(analystRows.map((row) => row.revenue90)),
+  }), [analystRows]);
 
   return (
     <main className="page-shell">
       <header className="topbar">
-        <a className="brand" href="./" aria-label="AI Bubble Monitor home">
-          <span className="brand-mark" aria-hidden="true">A</span>
-          <span>AI Bubble Monitor</span>
+        <a className="brand" href="./" aria-label="Auris home">
+          <img className="brand-mark" src={aurisMark} alt="" />
+          <span className="brand-name">auris</span>
+          <span className="brand-divider" />
+          <span className="brand-product">AI risk monitor</span>
         </a>
-        <span className="local-pill"><span className="pulse-dot" /> LOCAL INSTANCE</span>
+        <span className="local-pill"><span className="pulse-dot" /> PRIVATE INSTANCE</span>
       </header>
 
       <section className="hero">
-        <div className="eyebrow">MARKET DATA <span>·</span> PHASE 2 + SCORING</div>
-        <h1>Know what the data says.</h1>
-        <p className="intro">A local record of market and financial conditions, with source dates and missing observations kept visible. Scenario indices show evidence strength, coverage, and confidence.</p>
+        <div className="eyebrow">AI ECOSYSTEM <span>·</span> RISK &amp; RESILIENCE</div>
+        <h1>See the signal.<br /><span>Know its strength.</span></h1>
+        <p className="intro">Auris brings market, company, and filing evidence into one view. Start with the strongest current signal, then inspect its coverage, confidence, and sources.</p>
+      </section>
+
+      <section className="overview" aria-label="Current risk overview">
+        <div className="overview-lead">
+          <div className="overview-kicker"><span className="overview-marker" /> STRONGEST CURRENT SIGNAL</div>
+          {leadingScenario ? <>
+            <div className="overview-score">{leadingScenario.score!.toFixed(1)}<span>/ 100</span></div>
+            <h2>{leadingScenario.name}</h2>
+            <p className="overview-description">{scenarioDescription(leadingScenario.id)}</p>
+            <p>{leadingScenario.classification ?? "Evidence index"} <span>·</span> evidence index, not probability</p>
+            <div className="overview-meta"><span>Coverage <b>{Math.round(leadingScenario.coverage * 100)}%</b></span><span>Confidence <b>{Math.round(leadingScenario.confidence * 100)}%</b></span><span className={`overview-status ${leadingScenario.status}`}>{leadingScenario.status.replaceAll("_", " ")}</span></div>
+          </> : <>
+            <div className="overview-score overview-empty">—</div>
+            <h2>{state === "loading" ? "Reading the latest evidence" : "No scenario score available"}</h2>
+            <p>Scenario indices will appear here after scoring completes.</p>
+          </>}
+        </div>
+        <div className="overview-side">
+          <article className="overview-stat">
+            <span className="overview-stat-label">CURRENT STRESS</span>
+            <strong>{stressScenario?.score === null || !stressScenario ? "—" : stressScenario.score.toFixed(1)}</strong>
+            <span>{stressScenario?.classification ?? "Evidence index"}</span>
+            <div className="overview-track"><i style={{ width: `${Math.round((stressScenario?.score ?? 0) * 10) / 10}%` }} /></div>
+          </article>
+          <article className="overview-stat">
+            <span className="overview-stat-label">SYSTEM FRAGILITY</span>
+            <strong>{fragilityScenario?.score === null || !fragilityScenario ? "—" : fragilityScenario.score.toFixed(1)}</strong>
+            <span>{fragilityScenario?.classification ?? "Evidence index"}</span>
+            <div className="overview-track"><i style={{ width: `${Math.round((fragilityScenario?.score ?? 0) * 10) / 10}%` }} /></div>
+          </article>
+          <div className="overview-footnote">Higher scores mean stronger evidence for the named scenario. Coverage shows how much of its weighted input set is represented.</div>
+        </div>
       </section>
 
       <section className="status-grid" aria-label="Data collection status">
@@ -259,9 +422,9 @@ export function Dashboard() {
       <section className="scenario-section" aria-labelledby="scenario-title">
         <div className="scenario-heading">
           <div>
-            <div className="eyebrow">EVIDENCE INDICES · METHODOLOGY 0.4</div>
+            <div className="eyebrow">EVIDENCE INDICES · SCENARIO MONITOR</div>
             <h2 id="scenario-title">Scenario signals</h2>
-            <p>Scores describe the strength of supporting evidence. They are not probabilities. Missing components lower coverage and can leave an index unavailable.</p>
+            <p>Scores are evidence indices, not probabilities. Coverage is the weighted share of inputs available; confidence estimates the reliability of those available inputs and does not fall just because coverage is incomplete. “Partial coverage” means the score is below the configured 80% coverage target. “Low confidence” means input reliability is below 60%. Neither label is a calibrated probability of correctness.</p>
           </div>
         </div>
         <div className="scenario-grid">
@@ -271,8 +434,9 @@ export function Dashboard() {
               <article className={`scenario-card ${scenario.status}`} key={scenario.id}>
                 <div className="scenario-card-heading">
                   <h3>{scenario.name}</h3>
-                  <span className={`scenario-badge ${scenario.status}`}>{scenario.status.replaceAll("_", " ")}</span>
+                  <span className={`scenario-badge ${scenario.status}`}>{scenario.status === "low_confidence" ? "low data reliability" : scenario.status.replaceAll("_", " ")}</span>
                 </div>
+                <p className="scenario-description">{scenarioDescription(scenario.id)}</p>
                 <div className="scenario-value-row">
                   <strong>{scenario.score === null ? "—" : scenario.score.toFixed(1)}</strong>
                   <span>{scenario.classification ?? (scenario.status === "unavailable" ? "Insufficient inputs" : "Waiting for data")}</span>
@@ -329,23 +493,64 @@ export function Dashboard() {
           <div>
             <div className="eyebrow">SEC EDGAR · FILING EVIDENCE</div>
             <h2 id="events-title">Latest risk events</h2>
-            <p>Numeric CAPEX outlook extracted from recent 8-K/6-K filings. Up to two filings per company are scanned each collection cycle; each event links to its SEC filing, and historical spending is not treated as guidance.</p>
+            <p>Explicit CAPEX outlook and AI / Data Center revenue figures extracted from recent 8-K/6-K releases. These are filing evidence, not automatically scored; broad cloud revenue is not treated as AI revenue.</p>
           </div>
         </div>
         {events.length ? <div className="event-list">{events.slice(0, 8).map((item) => {
-          const lower = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 }).format(item.guidance_lower);
-          const upper = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 }).format(item.guidance_upper);
+          const lower = item.guidance_lower === null ? "Unavailable" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 }).format(item.guidance_lower);
+          const upper = item.guidance_upper === null ? "Unavailable" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 }).format(item.guidance_upper);
+          const evidenceLabel = item.category === "capex_guidance" ? "CAPEX outlook" : item.category === "ai_monetization" ? (item.guidance_unit === "USD_annualized" ? "AI business annualized run rate" : "AI revenue") : "Data Center revenue (compute proxy)";
           const revision = item.revision;
           const change = (value: number | null) => value === null ? "n/a" : `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
           return <article className="event-card" key={item.id}>
             <div className="event-meta"><span>{item.company_id.toUpperCase()}</span><span>{item.guidance_period ?? "Period unspecified"}</span><time>{formatDate(item.published_at)}</time></div>
             <h3>{item.title}</h3>
-            <p className="event-guidance">{lower === upper ? lower : `${lower}–${upper}`} expected CAPEX</p>
-            {revision ? <p className="event-revision">Change vs {formatDate(revision.previous_published_at)} · lower {change(revision.lower_change_percent)} · upper {change(revision.upper_change_percent)} · <a href={revision.previous_source_url} target="_blank" rel="noreferrer">prior guidance ↗</a></p> : <p className="event-revision">First tracked disclosure for this guidance period</p>}
+            <p className="event-guidance">{lower === upper ? lower : `${lower}–${upper}`} {evidenceLabel}{item.category === "capex_guidance" ? " expected" : " reported"}</p>
+            {revision ? <p className="event-revision">Change vs {formatDate(revision.previous_published_at)} · lower {change(revision.lower_change_percent)} · upper {change(revision.upper_change_percent)} · <a href={revision.previous_source_url} target="_blank" rel="noreferrer">prior disclosure ↗</a></p> : <p className="event-revision">First tracked disclosure for this metric and period</p>}
             <blockquote>{item.source_quote}</blockquote>
             <a className="financial-source-link" href={item.source_url} target="_blank" rel="noreferrer">SEC exhibit · accession {item.source_accession} ↗</a>
           </article>;
         })}</div> : <div className="empty-state">No explicit numeric CAPEX guidance found in the scanned 8-K/6-K filings.</div>}
+      </section>
+
+      <section className="data-panel analyst-panel" aria-labelledby="analyst-title">
+        <div className="panel-heading">
+          <div>
+            <div className="eyebrow">FISCAL.AI · ZACKS STREET CONSENSUS</div>
+            <h2 id="analyst-title">Analyst estimate revisions</h2>
+            <p>Consensus for the next reported quarter. Revision is the change in the average estimate versus the closest available snapshot at least 30 or 90 days earlier; it is not a risk score.</p>
+          </div>
+          <span className={`data-badge ${fiscalai?.status === "ready" ? "fresh" : fiscalai?.status ?? "unavailable"}`}>{fiscalai?.status ?? "checking"}</span>
+        </div>
+        {analystRows.some((row) => row.eps || row.revenue) ? <>
+          <div className="analyst-breadth" aria-label="Equal-weighted estimate revision breadth">
+            <span className="analyst-breadth-label">REVISION BREADTH · EACH COMPANY COUNTS ONCE · UNSCORED</span>
+            <div className="analyst-breadth-grid">
+              {[{ label: "EPS · 30d", value: analystBreadth.eps30 }, { label: "EPS · 90d", value: analystBreadth.eps90 },
+                { label: "Revenue · 30d", value: analystBreadth.revenue30 }, { label: "Revenue · 90d", value: analystBreadth.revenue90 }].map((item) => <article className="analyst-breadth-card" key={item.label}>
+                <span>{item.label}</span>
+                <strong><i className="breadth-up">{item.value.raised} ↑</i> · <i className="breadth-down">{item.value.cut} ↓</i> · {item.value.flat} flat</strong>
+                <small>{item.value.available}/{analystEstimates?.covered_company_count ?? 8} snapshots · median {item.value.median === null ? "—" : `${item.value.median > 0 ? "+" : ""}${item.value.median.toFixed(2)}%`}</small>
+              </article>)}
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table className="analyst-table">
+              <thead><tr><th>Company</th><th>Next quarter</th><th>EPS consensus</th><th>EPS revisions</th><th>Revenue consensus</th><th>Revenue revisions</th><th>Analyst counts</th><th>As of</th></tr></thead>
+              <tbody>{analystRows.map((row) => <tr key={row.id}>
+                <td><span className="indicator-name">{row.name}</span><span className="series-id">{row.ticker}</span></td>
+                <td>{row.period?.report_date ? formatDate(row.period.report_date) : "—"}<span className="series-id">{row.period?.period_type ?? "No period"}</span></td>
+                <td className="value-cell">{formatConsensus(row.eps?.mean ?? null, row.eps?.currency ?? null)}</td>
+                <td><span className="revision-pair"><small>30d</small><RevisionLabel value={row.eps30} /></span><span className="revision-pair"><small>90d</small><RevisionLabel value={row.eps90} /></span></td>
+                <td className="value-cell">{formatConsensus(row.revenue?.mean ?? null, row.revenue?.currency ?? null, true)}</td>
+                <td><span className="revision-pair"><small>30d</small><RevisionLabel value={row.revenue30} /></span><span className="revision-pair"><small>90d</small><RevisionLabel value={row.revenue90} /></span></td>
+                <td>{row.eps?.num_estimates ?? "—"} EPS<span className="series-id">{row.revenue?.num_estimates ?? "—"} revenue</span></td>
+                <td>{formatDate(row.latestDate)}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+          <div className="analyst-footnote">Showing {analystRows.filter((row) => row.eps || row.revenue).length} of {analystEstimates?.covered_company_count ?? 8} companies · collected snapshots are dated and retained for trend analysis. <a href={analystEstimates?.attribution.url} target="_blank" rel="noreferrer">{analystEstimates?.attribution.text} ↗</a></div>
+        </> : <div className="empty-state">{fiscalai?.configured ? "No analyst estimates have been collected yet, or the Fiscal.ai plan does not include Street Consensus." : "Add a Fiscal.ai API key in the local .env file or Home Assistant app options, then restart the app to load analyst estimates."}</div>}
       </section>
 
       <section className="data-panel company-panel" aria-labelledby="companies-title">
@@ -436,7 +641,7 @@ export function Dashboard() {
       </section>
 
       <footer className="footer">
-        <span>AI BUBBLE RISK MONITOR <span className="footer-separator">/</span> LOCAL-FIRST</span>
+        <span>AURIS <span className="footer-separator">/</span> AI ECOSYSTEM RISK MONITOR</span>
         <div className="footer-actions">
           <a className="api-link" href="https://coinpaprika.com/" target="_blank" rel="noreferrer">Powered by CoinPaprika <span aria-hidden="true">↗</span></a>
           <a className="api-link" href="./docs">API documentation <span aria-hidden="true">↗</span></a>

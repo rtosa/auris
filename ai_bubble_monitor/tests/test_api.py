@@ -31,7 +31,7 @@ def test_health_reports_database_and_migration(tmp_path):
     body = response.json()
     assert body["status"] == "ok"
     assert body["database"]["ok"] is True
-    assert body["database"]["migration_version"] == "0007_sec_guidance_events"
+    assert body["database"]["migration_version"] == "0009_analyst_currency"
     assert body["timestamp"]
 
 
@@ -51,6 +51,17 @@ def test_events_endpoint_returns_only_sourced_capex_guidance(tmp_path):
     assert response.json() == {"items": [], "count": 0}
 
 
+def test_analyst_estimates_endpoint_reports_free_coverage_and_attribution(tmp_path):
+    app = create_app(Settings(data_dir=tmp_path, ingress_mode=False))
+    response = request_with_lifespan(app, "/api/v1/analyst-estimates")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 0
+    assert body["covered_company_count"] == 8
+    assert body["attribution"]["url"] == "https://www.zacksdata.com"
+    assert "googl" in body["supported_company_ids"]
+
+
 def test_indicator_catalog_and_data_health_are_seeded(tmp_path):
     app = create_app(Settings(data_dir=tmp_path, ingress_mode=False))
     catalog = request_with_lifespan(app, "/api/v1/indicators")
@@ -58,8 +69,8 @@ def test_indicator_catalog_and_data_health_are_seeded(tmp_path):
     sources = request_with_lifespan(app, "/api/v1/data-sources")
 
     assert catalog.status_code == health.status_code == sources.status_code == 200
-    assert catalog.json()["count"] == 21
-    assert catalog.json()["active_count"] == 20
+    assert catalog.json()["count"] == 25
+    assert catalog.json()["active_count"] == 24
     retired = next(row for row in catalog.json()["items"] if row["id"] == "russell_2000")
     assert retired["data_status"] == "retired"
     assert {row["id"] for row in catalog.json()["items"]} >= {"vix", "high_yield_oas", "us_10y_yield", "wti_crude_oil", "henry_hub_natural_gas", "bank_lending_tightening", "initial_jobless_claims", "industrial_production"}
@@ -67,23 +78,57 @@ def test_indicator_catalog_and_data_health_are_seeded(tmp_path):
     assert definitions["cpi_index"]["minimum_observations"] == 48
     assert definitions["unemployment_rate"]["minimum_observations"] == 48
     assert definitions["bank_lending_tightening"]["minimum_observations"] == 16
-    assert health.json()["active_indicators"] == 20
-    assert health.json()["unavailable_indicators"] == 20
+    assert health.json()["active_indicators"] == 24
+    assert health.json()["unavailable_indicators"] == 24
     assert health.json()["retired_indicators"] == 1
     fred = next(row for row in sources.json()["items"] if row["id"] == "fred")
     assert fred["status"] == "unconfigured"
-    assert {row["id"] for row in sources.json()["items"]} == {"fred", "coinpaprika", "sec"}
+    assert {row["id"] for row in sources.json()["items"]} == {"fred", "coinpaprika", "sec", "proskauer", "fiscalai"}
     sec = next(row for row in sources.json()["items"] if row["id"] == "sec")
     assert sec["status"] == "unconfigured"
 
 
-def test_manual_collection_requires_fred_key(tmp_path):
-    app = create_app(Settings(data_dir=tmp_path, ingress_mode=False))
+def test_manual_collection_runs_public_sources_without_api_keys(tmp_path, monkeypatch):
+    async def fake_coinpaprika(*_args, **_kwargs):
+        return {"source_id": "coinpaprika", "status": "ok", "series_requested": 2, "series_succeeded": 2, "observations_received": 0}
 
+    async def fake_proskauer(*_args, **_kwargs):
+        return {"source_id": "proskauer", "status": "ok", "series_requested": 1, "series_succeeded": 1, "observations_received": 0}
+
+    monkeypatch.setattr("app.main.collect_coinpaprika", fake_coinpaprika)
+    monkeypatch.setattr("app.main.collect_proskauer", fake_proskauer)
+    app = create_app(Settings(data_dir=tmp_path, ingress_mode=False))
     response = request_with_lifespan(app, "/api/v1/admin/collect", method="POST")
 
-    assert response.status_code == 409
-    assert "FRED API key or a descriptive SEC user agent" in response.json()["detail"]
+    assert response.status_code == 200
+    assert {item["source_id"] for item in response.json()["sources"]} == {"coinpaprika", "proskauer"}
+    assert response.json()["status"] == "ok"
+
+
+def test_automatic_collection_starts_public_feeds_without_credentials(tmp_path, monkeypatch):
+    started = set()
+
+    async def fake_coinpaprika(*_args, **_kwargs):
+        started.add("coinpaprika")
+        return {"source_id": "coinpaprika", "status": "ok", "series_requested": 2, "series_succeeded": 2, "observations_received": 0}
+
+    async def fake_proskauer(*_args, **_kwargs):
+        started.add("proskauer")
+        return {"source_id": "proskauer", "status": "ok", "series_requested": 1, "series_succeeded": 1, "observations_received": 0}
+
+    monkeypatch.setattr("app.main.collect_coinpaprika", fake_coinpaprika)
+    monkeypatch.setattr("app.main.collect_proskauer", fake_proskauer)
+    app = create_app(Settings(data_dir=tmp_path, ingress_mode=False, auto_collection_enabled=True))
+
+    async def perform():
+        async with app.router.lifespan_context(app):
+            for _ in range(20):
+                if started == {"coinpaprika", "proskauer"}:
+                    break
+                await asyncio.sleep(0.01)
+
+    asyncio.run(perform())
+    assert started == {"coinpaprika", "proskauer"}
 
 
 def test_company_universe_is_visible_before_sec_is_configured(tmp_path):
@@ -105,7 +150,7 @@ def test_manual_recalculation_and_indicator_history_endpoints(tmp_path):
     missing = request_with_lifespan(app, "/api/v1/indicators/not-real/history")
 
     assert result.status_code == 200
-    assert result.json()["normalization"]["methodology_version"] == "0.8.0"
+    assert result.json()["normalization"]["methodology_version"] == "0.10.0"
     assert result.json()["scoring"]["scores_saved"] == 6
     scenarios = request_with_lifespan(app, "/api/v1/scenarios")
     macro = next(row for row in scenarios.json()["items"] if row["id"] == "macro_crisis")
@@ -129,6 +174,14 @@ def test_ingress_mode_rejects_non_home_assistant_sources(tmp_path):
     response = request_with_lifespan(app, "/api/v1/health", ("192.0.2.10", 1234))
 
     assert response.status_code == 403
+
+
+def test_ingress_mode_allows_loopback_health_probe_only(tmp_path):
+    app = create_app(Settings(data_dir=tmp_path, ingress_mode=True))
+    health = request_with_lifespan(app, "/api/v1/health", ("127.0.0.1", 54321))
+    other = request_with_lifespan(app, "/api/v1/companies", ("127.0.0.1", 54321))
+    assert health.status_code == 200
+    assert other.status_code == 403
 
 
 def test_ingress_mode_allows_home_assistant_proxy(tmp_path):
@@ -160,7 +213,7 @@ def test_database_survives_app_recreation_and_uses_wal(tmp_path):
     second = request_with_lifespan(app_after_restart, "/api/v1/health")
 
     assert first.status_code == second.status_code == 200
-    assert second.json()["database"]["migration_version"] == "0007_sec_guidance_events"
+    assert second.json()["database"]["migration_version"] == "0009_analyst_currency"
 
     import sqlite3
 

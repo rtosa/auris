@@ -54,6 +54,14 @@ customer_concentration:
     tags: [ifrs-full:PercentageOfEntitysRevenue]
     customer_axes: [ifrs-full:MajorCustomersAxis]
     include_year_ago_comparative: true
+customer_concentration_default:
+  metric: customer_revenue_concentration_percent
+  tags: [us-gaap:ConcentrationRiskPercentage1]
+  customer_axes: [srt:MajorCustomersAxis]
+  required_dimensions: {us-gaap:ConcentrationRiskByTypeAxis: us-gaap:CustomerConcentrationRiskMember}
+  benchmark_axis: us-gaap:ConcentrationRiskByBenchmarkAxis
+  benchmark_members: [us-gaap:RevenueFromContractWithCustomerMember, us-gaap:SalesRevenueNetMember]
+  include_year_ago_comparative: true
 companies:
   amzn:
     - metric: cloud_revenue_aws
