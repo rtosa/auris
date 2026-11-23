@@ -207,6 +207,17 @@ function scenarioDescription(id: string): string {
   return descriptions[id] ?? "Evidence signals associated with this risk scenario.";
 }
 
+function plainSignalLevel(classification: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    "Very low signal": "Very low",
+    "Low signal": "Low",
+    "Moderate signal": "Moderate",
+    "High signal": "Elevated",
+    "Critical signal": "Very high",
+  };
+  return classification ? labels[classification] ?? classification : "Not available";
+}
+
 function YearOverYearLine({ metric }: { metric: CompanyMetric | undefined }) {
   const prior = metric?.year_over_year;
   return <span className="series-id">{yearOverYearLabel(metric)}{prior?.source_url ? <> · <a className="financial-source-link" href={prior.source_url} target="_blank" rel="noreferrer">prior filing ↗</a></> : null}</span>;
@@ -291,11 +302,21 @@ export function Dashboard() {
   const coverage = dataHealth?.active_indicators
     ? Math.round((dataHealth.fresh_indicators / dataHealth.active_indicators) * 100)
     : 0;
-  const rankedScenarios = scenarios.filter((scenario) => scenario.score !== null)
+  const scenarioModels = scenarios.filter((scenario) => !["fragility_index", "current_stress_index"].includes(scenario.id));
+  const scenarioIndices = scenarios.filter((scenario) => ["fragility_index", "current_stress_index"].includes(scenario.id));
+  const rankedScenarios = scenarioModels.filter((scenario) => scenario.score !== null)
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  const sortedScenarioModels = [...scenarioModels].sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
   const leadingScenario = rankedScenarios[0] ?? null;
+  const runnerUpScenario = rankedScenarios[1] ?? null;
+  const leadingGap = leadingScenario && runnerUpScenario && leadingScenario.score !== null && runnerUpScenario.score !== null
+    ? (leadingScenario.score - runnerUpScenario.score).toFixed(1) : null;
   const stressScenario = scenarios.find((scenario) => scenario.id === "current_stress_index") ?? null;
   const fragilityScenario = scenarios.find((scenario) => scenario.id === "fragility_index") ?? null;
+  const currentPicture = stressScenario?.score !== null && stressScenario?.score !== undefined
+      ? `Market stress is ${plainSignalLevel(stressScenario.classification).toLowerCase()}. ${fragilityScenario?.score !== null && fragilityScenario?.score !== undefined
+      ? `AI ecosystem fragility is ${plainSignalLevel(fragilityScenario.classification).toLowerCase()}. ` : ""}${leadingScenario && runnerUpScenario ? `The two highest scenario signals are ${leadingScenario.name} and ${runnerUpScenario.name}, only ${leadingGap} points apart.` : leadingScenario ? `The highest current scenario signal is ${leadingScenario.name}.` : ""}`
+    : "A plain-language summary will appear when the first scenario scores are available.";
   const analystRows = useMemo(() => {
     if (!analystEstimates) return [];
     const today = new Date().toISOString().slice(0, 10);
@@ -350,65 +371,58 @@ export function Dashboard() {
         <span className="local-pill"><span className="pulse-dot" /> PRIVATE INSTANCE</span>
       </header>
 
-      <section className="hero">
-        <div className="eyebrow">AI ECOSYSTEM <span>·</span> RISK &amp; RESILIENCE</div>
-        <h1>See the signal.<br /><span>Know its strength.</span></h1>
-        <p className="intro">Auris brings market, company, and filing evidence into one view. Start with the strongest current signal, then inspect its coverage, confidence, and sources.</p>
-      </section>
+      <div className="top-summary">
+        <section className="hero">
+          <div className="eyebrow">AI ECOSYSTEM <span>·</span> RISK &amp; RESILIENCE</div>
+          <h1>See the signal.<br /><span>Know its strength.</span></h1>
+          <p className="intro">A plain-language view of market stress, key drivers, and the evidence behind them.</p>
+        </section>
 
-      <section className="overview" aria-label="Current risk overview">
-        <div className="overview-lead">
-          <div className="overview-kicker"><span className="overview-marker" /> STRONGEST CURRENT SIGNAL</div>
-          {leadingScenario ? <>
-            <div className="overview-score">{leadingScenario.score!.toFixed(1)}<span>/ 100</span></div>
-            <h2>{leadingScenario.name}</h2>
-            <p className="overview-description">{scenarioDescription(leadingScenario.id)}</p>
-            <p>{leadingScenario.classification ?? "Evidence index"} <span>·</span> evidence index, not probability</p>
-            <div className="overview-meta"><span>Coverage <b>{Math.round(leadingScenario.coverage * 100)}%</b></span><span>Confidence <b>{Math.round(leadingScenario.confidence * 100)}%</b></span><span className={`overview-status ${leadingScenario.status}`}>{leadingScenario.status.replaceAll("_", " ")}</span></div>
-          </> : <>
-            <div className="overview-score overview-empty">—</div>
-            <h2>{state === "loading" ? "Reading the latest evidence" : "No scenario score available"}</h2>
-            <p>Scenario indices will appear here after scoring completes.</p>
-          </>}
-        </div>
-        <div className="overview-side">
-          <article className="overview-stat">
-            <span className="overview-stat-label">CURRENT STRESS</span>
-            <strong>{stressScenario?.score === null || !stressScenario ? "—" : stressScenario.score.toFixed(1)}</strong>
-            <span>{stressScenario?.classification ?? "Evidence index"}</span>
-            <div className="overview-track"><i style={{ width: `${Math.round((stressScenario?.score ?? 0) * 10) / 10}%` }} /></div>
-          </article>
-          <article className="overview-stat">
-            <span className="overview-stat-label">SYSTEM FRAGILITY</span>
-            <strong>{fragilityScenario?.score === null || !fragilityScenario ? "—" : fragilityScenario.score.toFixed(1)}</strong>
-            <span>{fragilityScenario?.classification ?? "Evidence index"}</span>
-            <div className="overview-track"><i style={{ width: `${Math.round((fragilityScenario?.score ?? 0) * 10) / 10}%` }} /></div>
-          </article>
-          <div className="overview-footnote">Higher scores mean stronger evidence for the named scenario. Coverage shows how much of its weighted input set is represented.</div>
-        </div>
-      </section>
-
-      <section className="status-grid" aria-label="Data collection status">
-        <article className="status-card main-status">
-          <div className="card-heading"><span className="card-icon green">⌁</span><span>Application</span></div>
-          <div className={`status-value ${dataReady ? "healthy" : state === "error" ? "unhealthy" : "pending"}`}>
-            <span className="status-orb" />{dataReady ? "Operational" : state === "error" ? "Unavailable" : "Checking"}
+        <section className="overview" aria-label="Current risk overview">
+        <div className="overview-main">
+          <div className="overview-kicker"><span className="overview-marker" /> CURRENT PICTURE</div>
+          <div className="overview-main-heading">
+            <div>
+              <span className="overview-stat-label">MARKET STRESS</span>
+              <div className="overview-score">{stressScenario?.score === null || !stressScenario ? "—" : stressScenario.score.toFixed(1)}<span>/ 100</span></div>
+            </div>
+            <span className={`overview-level level-${plainSignalLevel(stressScenario?.classification).toLowerCase().replaceAll(" ", "-")}`}>{plainSignalLevel(stressScenario?.classification)}</span>
           </div>
-          <p className="card-detail">FastAPI · SQLite · migration {health?.database.migration_version ?? "—"}</p>
-        </article>
-
-        <article className="status-card">
-          <div className="card-heading"><span className="card-icon blue">▤</span><span>FRED source</span></div>
-          <div className="metric-value source-value"><span className={`source-dot ${fred?.status ?? "pending"}`} />{fred?.status ?? "Checking"}</div>
-          <p className="card-detail">FRED {fred?.status ?? "Checking"} · CoinPaprika {coinpaprika?.status ?? "Checking"} · SEC {sec?.status ?? "Checking"}</p>
-        </article>
-
-        <article className="status-card">
-          <div className="card-heading"><span className="card-icon violet">◷</span><span>Fresh indicators</span></div>
-          <div className="metric-value">{dataHealth?.fresh_indicators ?? 0}<span className="metric-total">/ {dataHealth?.active_indicators ?? 20}</span></div>
-          <p className="card-detail">{dataHealth?.stale_indicators ?? 0} stale · {dataHealth?.unavailable_indicators ?? 0} unavailable</p>
-        </article>
-      </section>
+          <div className="risk-gauge" role="meter" aria-label={`Market stress: ${stressScenario?.score?.toFixed(1) ?? "unavailable"} out of 100, ${plainSignalLevel(stressScenario?.classification)}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={stressScenario?.score ?? 0}>
+            <div className="risk-gauge-zones"><i /><i /><i /><i /><i /></div>
+            {stressScenario?.score !== null && stressScenario?.score !== undefined && <span className="risk-gauge-marker" style={{ left: `${stressScenario.score}%` }} />}
+          </div>
+          <div className="risk-gauge-labels"><span>Very low</span><span>Low</span><span>Moderate</span><span>Elevated</span><span>Very high</span></div>
+          <p className="overview-summary">{currentPicture}</p>
+          <div className="overview-quality">
+            <span title="Share of the weighted inputs for this index that are available">Inputs covered <b>{stressScenario ? `${Math.round(stressScenario.coverage * 100)}%` : "—"}</b></span>
+            <span title="Estimated reliability of the inputs that are available">Input reliability <b>{stressScenario ? `${Math.round(stressScenario.confidence * 100)}%` : "—"}</b></span>
+            <a href="#scenario-title">Explore the scenarios <span aria-hidden="true">↓</span></a>
+          </div>
+        </div>
+        <aside className="overview-context">
+          <div className="overview-context-block">
+            <span className="overview-stat-label">WHAT IS DRIVING STRESS</span>
+            <div className="driver-list">
+              {(stressScenario?.top_contributors ?? []).slice(0, 3).map((driver) => (
+                <div className="driver-row" key={driver.name}><span>{driver.name}</span><b>+{driver.contribution.toFixed(1)}</b></div>
+              ))}
+              {(!stressScenario || stressScenario.top_contributors.length === 0) && <span className="driver-empty">Drivers appear as inputs become available.</span>}
+            </div>
+            <p className="driver-caption">Top contributions to the stress index</p>
+          </div>
+          <div className="overview-context-block scenario-highlight">
+            <span className="overview-stat-label">HIGHEST CURRENT SCENARIO SIGNAL</span>
+            {leadingScenario ? <>
+              <strong>{leadingScenario.name}</strong>
+              <p>{scenarioDescription(leadingScenario.id)}</p>
+              <span className={`overview-status ${leadingScenario.status}`}>{plainSignalLevel(leadingScenario.classification)} · {Math.round(leadingScenario.coverage * 100)}% inputs covered</span>
+            </> : <span className="driver-empty">Waiting for scenario scores.</span>}
+          </div>
+          <p className="overview-footnote">Coverage shows how many expected inputs have data; reliability estimates how dependable those data are. Neither is a probability.</p>
+        </aside>
+        </section>
+      </div>
 
       {sec?.status === "unconfigured" && state === "ready" && (
         <section className="setup-note" role="status">
@@ -419,49 +433,74 @@ export function Dashboard() {
         </section>
       )}
 
+      <details className="data-flow">
+        <summary className="data-flow-summary" id="data-flow-title">
+          <div className="eyebrow">HOW THE SIGNAL IS BUILT</div>
+          <span>How the data becomes a signal</span>
+          <span className="data-flow-toggle" aria-hidden="true">+</span>
+        </summary>
+        <div className="data-flow-content">
+          <p className="data-flow-intro">Each step adds context. Missing or unreliable inputs reduce coverage or reliability.</p>
+        <ol className="flow-steps">
+          <li className="flow-step">
+            <span className="flow-number">01</span>
+            <h3>Collect evidence</h3>
+            <p><b>FRED</b> market and economic series · <b>CoinPaprika</b> crypto prices · <b>SEC</b> filings and company accounts · analyst estimate revisions.</p>
+          </li>
+          <li className="flow-step">
+            <span className="flow-number">02</span>
+            <h3>Check and prepare</h3>
+            <p>Values are stored with dates and sources, checked for freshness, then normalized to comparable 0–100 signals. Coverage and reliability are tracked separately.</p>
+          </li>
+          <li className="flow-step">
+            <span className="flow-number">03</span>
+            <h3>Score four scenarios</h3>
+            <p>Market, credit, macro, and AI company evidence feed the four scenario models. Filing headlines add context; they affect a score only when mapped to a model input.</p>
+          </li>
+          <li className="flow-step flow-result">
+            <span className="flow-number">04</span>
+            <h3>Summarize two indices</h3>
+            <p><b>Current Stress</b> summarizes market and credit conditions. <b>AI Ecosystem Fragility</b> combines scenario signals into an overall vulnerability view.</p>
+          </li>
+        </ol>
+          <p className="flow-note">Scores describe current evidence, not the probability that a scenario will happen.</p>
+        </div>
+      </details>
+
       <section className="scenario-section" aria-labelledby="scenario-title">
         <div className="scenario-heading">
           <div>
-            <div className="eyebrow">EVIDENCE INDICES · SCENARIO MONITOR</div>
-            <h2 id="scenario-title">Scenario signals</h2>
-            <p>Scores are evidence indices, not probabilities. Coverage is the weighted share of inputs available; confidence estimates the reliability of those available inputs and does not fall just because coverage is incomplete. “Partial coverage” means the score is below the configured 80% coverage target. “Low confidence” means input reliability is below 60%. Neither label is a calibrated probability of correctness.</p>
+            <div className="eyebrow">FOUR POSSIBLE STRESS PATTERNS</div>
+            <h2 id="scenario-title">What the signals point to</h2>
+            <p>Each score shows the strength of evidence for that pattern today, not its chance of happening. Compare the bars and contributing factors; coverage and reliability describe the data behind each score.</p>
           </div>
         </div>
         <div className="scenario-grid">
-          {scenarios.map((scenario) => {
+          {sortedScenarioModels.map((scenario) => {
             const missing = scenario.components.filter((component) => component.status !== "available");
+            const rank = rankedScenarios.findIndex((item) => item.id === scenario.id);
+            const gapFromLeader = leadingScenario?.score !== null && leadingScenario?.score !== undefined && scenario.score !== null
+              ? (leadingScenario.score - scenario.score).toFixed(1) : null;
             return (
               <article className={`scenario-card ${scenario.status}`} key={scenario.id}>
                 <div className="scenario-card-heading">
                   <h3>{scenario.name}</h3>
-                  <span className={`scenario-badge ${scenario.status}`}>{scenario.status === "low_confidence" ? "low data reliability" : scenario.status.replaceAll("_", " ")}</span>
+                  <span className={`scenario-badge ${scenario.status}`}>{scenario.score === null ? "Awaiting data" : scenario.status === "partial_coverage" ? "Partial data" : scenario.status === "low_confidence" ? "Lower reliability" : "Signal available"}</span>
                 </div>
                 <p className="scenario-description">{scenarioDescription(scenario.id)}</p>
                 <div className="scenario-value-row">
                   <strong>{scenario.score === null ? "—" : scenario.score.toFixed(1)}</strong>
-                  <span>{scenario.classification ?? (scenario.status === "unavailable" ? "Insufficient inputs" : "Waiting for data")}</span>
+                  <span>{scenario.score === null ? "No score yet" : `${plainSignalLevel(scenario.classification)} evidence signal`}</span>
                 </div>
+                <div className="scenario-score-track" role="img" aria-label={`Evidence signal score ${scenario.score === null ? "unavailable" : `${scenario.score.toFixed(1)} out of 100`}`}><span style={{ width: `${scenario.score ?? 0}%` }} /></div>
+                {rank > 0 && gapFromLeader !== null && <p className="scenario-gap">{gapFromLeader} points below the highest signal</p>}
                 <div className="scenario-metrics">
-                  <span>Coverage <b>{Math.round(scenario.coverage * 100)}%</b></span>
-                  <span>Confidence <b>{Math.round(scenario.confidence * 100)}%</b></span>
-                </div>
-                <div className="scenario-trends" aria-label="Score changes">
-                  {["7d", "30d", "90d"].map((period) => {
-                    const change = scenario.score_changes?.[period];
-                    return <span key={period}>{period} <b className={change ? (change.value > 0 ? "trend-up" : change.value < 0 ? "trend-down" : "") : ""}>{change ? `${change.value > 0 ? "+" : ""}${change.value.toFixed(1)}` : "—"}</b></span>;
-                  })}
-                </div>
-                <Sparkline points={scenario.history ?? []} />
-                {scenario.persistence && <div className={`persistence-note ${scenario.persistence.persistent ? "active" : ""}`}>
-                  {scenario.persistence.persistent ? "Persistent signal" : "Persistence not established"}
-                  <span>{scenario.persistence.days_above_threshold}/{scenario.persistence.lookback_days} days ≥ {scenario.persistence.threshold}</span>
-                </div>}
-                <div className="scenario-track" aria-label={`${Math.round(scenario.coverage * 100)}% component coverage`}>
-                  <span style={{ width: `${Math.round(scenario.coverage * 100)}%` }} />
+                  <span title="Share of weighted model inputs with available data">Data coverage <b>{Math.round(scenario.coverage * 100)}%</b></span>
+                  <span title="Estimated dependability of the available inputs">Input reliability <b>{Math.round(scenario.confidence * 100)}%</b></span>
                 </div>
                 {scenario.top_contributors.length > 0 ? (
                   <div className="scenario-contributors">
-                    <span className="scenario-caption">TOP CONTRIBUTORS</span>
+                    <span className="scenario-caption">WHAT ADDS TO THIS SCORE</span>
                     {scenario.top_contributors.map((item) => <span key={item.name} title={item.inputs.map((input) => `${input.source ?? "Unavailable"}: ${input.value === null ? "no data" : input.value.toFixed(1)}`).join(" · ")}>{item.name} <b>+{item.contribution.toFixed(1)}</b></span>)}
                   </div>
                 ) : missing.length > 0 ? (
@@ -471,10 +510,48 @@ export function Dashboard() {
                     {missing.length > 2 && <span>+{missing.length - 2} more components</span>}
                   </div>
                 ) : null}
+                <details className="scenario-more">
+                  <summary>History and persistence</summary>
+                  <div className="scenario-trends" aria-label="Score changes">
+                    {["7d", "30d", "90d"].map((period) => {
+                      const change = scenario.score_changes?.[period];
+                      return <span key={period}>{period} <b className={change ? (change.value > 0 ? "trend-up" : change.value < 0 ? "trend-down" : "") : ""}>{change ? `${change.value > 0 ? "+" : ""}${change.value.toFixed(1)}` : "—"}</b></span>;
+                    })}
+                  </div>
+                  <Sparkline points={scenario.history ?? []} />
+                  {scenario.persistence && <div className={`persistence-note ${scenario.persistence.persistent ? "active" : ""}`}>
+                    {scenario.persistence.persistent ? "Signal persistent" : "Persistence not established"}
+                    <span>{scenario.persistence.days_above_threshold}/{scenario.persistence.lookback_days} days above {scenario.persistence.threshold}</span>
+                  </div>}
+                  <p className="scenario-detail-help">Persistence checks whether the score stayed at or above the threshold long enough. It does not predict what happens next.</p>
+                </details>
               </article>
             );
           })}
           {scenarios.length === 0 && state === "ready" && <div className="empty-state">Scenario scores have not been calculated yet.</div>}
+        </div>
+      </section>
+
+      <section className="indices-section" aria-labelledby="indices-title">
+        <div className="scenario-heading">
+          <div>
+            <div className="eyebrow">TWO OVERALL READINGS</div>
+            <h2 id="indices-title">Summary indices</h2>
+            <p>These summarize different parts of the picture. They are not additional scenarios.</p>
+          </div>
+        </div>
+        <div className="indices-grid">
+          {scenarioIndices.map((index) => (
+            <article className="index-card" key={index.id}>
+              <div><h3>{index.name}</h3><p>{scenarioDescription(index.id)}</p></div>
+              <div className="index-score">{index.score === null ? "—" : index.score.toFixed(1)}<span>/100</span></div>
+              <div className="scenario-score-track" role="img" aria-label={`${index.name}: ${index.score === null ? "unavailable" : `${index.score.toFixed(1)} out of 100`}`}><span style={{ width: `${index.score ?? 0}%` }} /></div>
+              <div className="scenario-metrics">
+                <span>Data coverage <b>{Math.round(index.coverage * 100)}%</b></span>
+                <span>Input reliability <b>{Math.round(index.confidence * 100)}%</b></span>
+              </div>
+            </article>
+          ))}
         </div>
       </section>
 
@@ -640,10 +717,31 @@ export function Dashboard() {
         </div>
       </section>
 
+      <section className="status-grid" aria-label="Data collection status">
+        <article className="status-card main-status">
+          <div className="card-heading"><span className="card-icon green">⌁</span><span>Application</span></div>
+          <div className={`status-value ${dataReady ? "healthy" : state === "error" ? "unhealthy" : "pending"}`}>
+            <span className="status-orb" />{dataReady ? "Operational" : state === "error" ? "Unavailable" : "Checking"}
+          </div>
+          <p className="card-detail">FastAPI · SQLite · migration {health?.database.migration_version ?? "—"}</p>
+        </article>
+
+        <article className="status-card">
+          <div className="card-heading"><span className="card-icon blue">▤</span><span>Data sources</span></div>
+          <div className="metric-value source-value"><span className={`source-dot ${fred?.status ?? "pending"}`} />{fred?.status ?? "Checking"}</div>
+          <p className="card-detail">FRED {fred?.status ?? "Checking"} · CoinPaprika {coinpaprika?.status ?? "Checking"} · SEC {sec?.status ?? "Checking"}</p>
+        </article>
+
+        <article className="status-card">
+          <div className="card-heading"><span className="card-icon violet">◷</span><span>Fresh indicators</span></div>
+          <div className="metric-value">{dataHealth?.fresh_indicators ?? 0}<span className="metric-total">/ {dataHealth?.active_indicators ?? 20}</span></div>
+          <p className="card-detail">{dataHealth?.stale_indicators ?? 0} stale · {dataHealth?.unavailable_indicators ?? 0} unavailable</p>
+        </article>
+      </section>
+
       <footer className="footer">
         <span>AURIS <span className="footer-separator">/</span> AI ECOSYSTEM RISK MONITOR</span>
         <div className="footer-actions">
-          <a className="api-link" href="https://coinpaprika.com/" target="_blank" rel="noreferrer">Powered by CoinPaprika <span aria-hidden="true">↗</span></a>
           <a className="api-link" href="./docs">API documentation <span aria-hidden="true">↗</span></a>
           <button className="refresh-button" onClick={() => void refresh()} type="button">Refresh data <span aria-hidden="true">↻</span></button>
         </div>
@@ -651,3 +749,4 @@ export function Dashboard() {
     </main>
   );
 }
+
