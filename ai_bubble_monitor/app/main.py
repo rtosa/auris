@@ -43,7 +43,7 @@ from app.services.scoring import (
     scenario_history,
 )
 
-APP_VERSION = "0.23.4"
+APP_VERSION = "0.23.5"
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
@@ -351,7 +351,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     asset_path = (STATIC_DIR / source_match.group(1).removeprefix("./")).resolve()
                     if asset_path.is_relative_to((STATIC_DIR / "assets").resolve()) and asset_path.is_file():
                         javascript = asset_path.read_text(encoding="utf-8")
-                        javascript = re.sub(r"</script", r"<\\/script", javascript, flags=re.IGNORECASE)
+                        javascript = re.sub(
+                            r"</script",
+                            lambda match: "<" + chr(92) + match.group(0)[1:],
+                            javascript,
+                            flags=re.IGNORECASE,
+                        )
                         html = html[: tag_match.start()] + f'<script type="module">{javascript}</script>' + html[closing_end:]
                         cursor = tag_match.start() + len(javascript) + len('<script type="module"></script>')
                         continue

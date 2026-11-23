@@ -12,7 +12,8 @@ function inlineAsset(tagPattern, replacement) {
   if (!match) throw new Error(`Built dashboard is missing asset tag: ${tagPattern}`);
   const assetPath = resolve(distDir, match[1].replace(/^\.\//, ""));
   const contents = readFileSync(assetPath, "utf8");
-  html = html.replace(match[0], replacement(contents));
+  // Use a callback so `$&` and related sequences inside the bundle stay literal.
+  html = html.replace(match[0], () => replacement(contents));
 }
 
 inlineAsset(
