@@ -122,6 +122,8 @@ type CollectionResult = {
 
 type LoadState = "loading" | "ready" | "error";
 
+const SCENARIO_ORDER = ["boom_continuation", "prolonged_repricing", "credit_crunch", "macro_crisis"];
+
 async function readJson<T>(path: string): Promise<T> {
   const response = await fetch(`./api/v1/${path}`, { headers: { Accept: "application/json" } });
   if (!response.ok) throw new Error(`API returned ${response.status}`);
@@ -325,7 +327,11 @@ export function Dashboard() {
   const scenarioIndices = scenarios.filter((scenario) => ["fragility_index", "current_stress_index"].includes(scenario.id));
   const rankedScenarios = scenarioModels.filter((scenario) => scenario.score !== null)
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-  const sortedScenarioModels = [...scenarioModels].sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  const sortedScenarioModels = [...scenarioModels].sort((a, b) => {
+    const aOrder = SCENARIO_ORDER.indexOf(a.id);
+    const bOrder = SCENARIO_ORDER.indexOf(b.id);
+    return (aOrder < 0 ? Number.MAX_SAFE_INTEGER : aOrder) - (bOrder < 0 ? Number.MAX_SAFE_INTEGER : bOrder);
+  });
   const leadingScenario = rankedScenarios[0] ?? null;
   const runnerUpScenario = rankedScenarios[1] ?? null;
   const leadingGap = leadingScenario && runnerUpScenario && leadingScenario.score !== null && runnerUpScenario.score !== null
@@ -499,7 +505,7 @@ export function Dashboard() {
               ? `The strongest current evidence aligns with ${leadingScenario.name}. Scores show signal strength, not the probability of an outcome.`
               : "Scenario signals will appear when enough source data is available."}</p>
           </div>
-          <div className="outlook-list" aria-label="Scenario signal strength, ranked highest first">
+          <div className="outlook-list" aria-label="Scenario signals in fixed model order">
             {sortedScenarioModels.map((scenario, index) => {
               const band = scenarioSignalBand(scenario.score);
               return <div className={`outlook-row ${band}`} key={scenario.id}>
