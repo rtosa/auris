@@ -42,7 +42,7 @@ from app.services.scoring import (
     scenario_history,
 )
 
-APP_VERSION = "0.23.0"
+APP_VERSION = "0.23.1"
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
@@ -345,3 +345,4 @@ app = create_app()
 if __name__ == "__main__":
     settings = app.state.settings
     uvicorn.run(app, host=settings.host, port=settings.port, log_level=settings.log_level)
+

@@ -21,7 +21,7 @@ RUN npm run build
 
 FROM python:3.12-slim
 
-ARG BUILD_VERSION=0.23.0
+ARG BUILD_VERSION=0.23.1
 ARG BUILD_ARCH=amd64
 
 LABEL io.hass.version="${BUILD_VERSION}" \
@@ -49,3 +49,4 @@ EXPOSE 8099
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/api/v1/health', timeout=5)" || exit 1
 CMD ["python", "-m", "app.main"]
+
