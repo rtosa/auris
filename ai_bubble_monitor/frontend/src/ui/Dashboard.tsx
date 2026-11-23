@@ -207,6 +207,25 @@ function scenarioDescription(id: string): string {
   return descriptions[id] ?? "Evidence signals associated with this risk scenario.";
 }
 
+function scenarioOutlookLabel(id: string): string {
+  const labels: Record<string, string> = {
+    boom_continuation: "GROWTH / RELIEF SIGNAL",
+    prolonged_repricing: "REPRICING PRESSURE",
+    credit_crunch: "CREDIT STRESS",
+    macro_crisis: "MACRO STRESS",
+  };
+  return labels[id] ?? "SCENARIO SIGNAL";
+}
+
+function scenarioSignalBand(score: number | null): string {
+  if (score === null) return "unavailable";
+  if (score <= 19) return "very-low";
+  if (score <= 39) return "low";
+  if (score <= 59) return "moderate";
+  if (score <= 79) return "elevated";
+  return "very-high";
+}
+
 function plainSignalLevel(classification: string | null | undefined): string {
   const labels: Record<string, string> = {
     "Very low signal": "Very low",
@@ -468,6 +487,39 @@ export function Dashboard() {
       </details>
 
       <section className="scenario-section" aria-labelledby="scenario-title">
+        <section className="scenario-outlook" aria-labelledby="scenario-outlook-title">
+          <div className="outlook-topline">
+            <span className="outlook-name">AURIS / SCENARIO OUTLOOK</span>
+            <span className="outlook-live"><span className="pulse-dot" /> CURRENT MODEL OUTPUT</span>
+          </div>
+          <div className="outlook-current">
+            <span className="outlook-label">CURRENT ECOSYSTEM CONDITION</span>
+            <h2 id="scenario-outlook-title">{leadingScenario ? scenarioOutlookLabel(leadingScenario.id) : "SIGNALS NOT AVAILABLE"}</h2>
+            <p>{leadingScenario
+              ? `The strongest current evidence aligns with ${leadingScenario.name}. Scores show signal strength, not the probability of an outcome.`
+              : "Scenario signals will appear when enough source data is available."}</p>
+          </div>
+          <div className="outlook-list" aria-label="Scenario signal strength, ranked highest first">
+            {sortedScenarioModels.map((scenario, index) => {
+              const band = scenarioSignalBand(scenario.score);
+              return <div className={`outlook-row ${band}`} key={scenario.id}>
+                <div className="outlook-row-heading">
+                  <span className="outlook-rank">{String(index + 1).padStart(2, "0")}</span>
+                  <strong>{scenario.name}</strong>
+                  <b className="outlook-score">{scenario.score === null ? "—" : `${Math.round(scenario.score)}/100`}</b>
+                </div>
+                <div className="outlook-track" role="img" aria-label={`${scenario.name}: ${scenario.score === null ? "score unavailable" : `${scenario.score.toFixed(1)} out of 100, ${plainSignalLevel(scenario.classification)} evidence signal`}`}>
+                  <span style={{ width: `${scenario.score ?? 0}%` }} />
+                </div>
+                <div className="outlook-row-foot">
+                  <span>{scenarioDescription(scenario.id)}</span>
+                  <span>Signal: {scenario.score === null ? "Unavailable" : plainSignalLevel(scenario.classification)}</span>
+                </div>
+              </div>;
+            })}
+            {sortedScenarioModels.length === 0 && state === "ready" && <p className="outlook-empty">No scenario models are available.</p>}
+          </div>
+        </section>
         <div className="scenario-heading">
           <div>
             <div className="eyebrow">FOUR POSSIBLE STRESS PATTERNS</div>
