@@ -212,17 +212,19 @@ indicators:
     availability_note: "Overnight reverse-repo facility usage in billions of dollars; interpreted as a liquidity context series."
     scenarios: {macro_crisis: 0.03, credit_crunch: 0.015}
   - id: cpi_index
-    name: US Consumer Price Index (seasonally adjusted)
+    name: US CPI inflation rate (12-month change)
     category: inflation
-    unit: index_points
+    unit: percent
     frequency: monthly
     direction: higher_is_worse
     normalization_method: rolling_percentile
     source: fred
     source_id: CPIAUCSL
     staleness_days: 60
-    minimum_observations: 48
-    availability_note: "Monthly series; 48-month minimum leaves room for incomplete month boundaries in the five-year initial backfill."
+    minimum_observations: 24
+    lookback_days: 1460
+    transformation: year_over_year_percent_change
+    availability_note: "Derived from the seasonally adjusted CPI index as a 12-month percent change; the index level itself is not used as an inflation signal."
     scenarios: {prolonged_repricing: 0.1, macro_crisis: 0.2}
   - id: unemployment_rate
     name: US Unemployment Rate

@@ -296,7 +296,9 @@ def indicator_catalog(engine: Engine) -> list[dict[str, Any]]:
                   i.normalization_method, i.configuration,
                   (SELECT MAX(r.observation_date) FROM raw_observations r
                     WHERE r.indicator_id=i.id AND r.raw_value IS NOT NULL) AS latest_observation_date,
-                  (SELECT r.raw_value FROM raw_observations r
+                  (SELECT CASE WHEN v.indicator_id IS NOT NULL THEN v.raw_value ELSE r.raw_value END
+                    FROM raw_observations r LEFT JOIN indicator_values v
+                      ON v.indicator_id=r.indicator_id AND v.observation_date=r.observation_date
                     WHERE r.indicator_id=i.id AND r.raw_value IS NOT NULL
                     ORDER BY r.observation_date DESC LIMIT 1) AS latest_value,
                   (SELECT v.normalized_value FROM indicator_values v

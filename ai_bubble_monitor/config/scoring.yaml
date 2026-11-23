@@ -1,5 +1,5 @@
-version: "0.10.0"
-description: "Coverage-gated market, macroeconomic, liquidity, analyst revision, and filing-linked company evidence scores."
+version: "0.11.0"
+description: "Coverage-gated market, macroeconomic, liquidity, analyst revision, and filing-linked company evidence scores; CPI is represented as a 12-month rate of change."
 defaults:
   lookback_days: 1825
   minimum_observations: 60

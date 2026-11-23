@@ -75,7 +75,8 @@ def test_indicator_catalog_and_data_health_are_seeded(tmp_path):
     assert retired["data_status"] == "retired"
     assert {row["id"] for row in catalog.json()["items"]} >= {"vix", "high_yield_oas", "us_10y_yield", "wti_crude_oil", "henry_hub_natural_gas", "bank_lending_tightening", "initial_jobless_claims", "industrial_production"}
     definitions = {row["id"]: row["configuration"] for row in catalog.json()["items"]}
-    assert definitions["cpi_index"]["minimum_observations"] == 48
+    assert definitions["cpi_index"]["minimum_observations"] == 24
+    assert definitions["cpi_index"]["transformation"] == "year_over_year_percent_change"
     assert definitions["unemployment_rate"]["minimum_observations"] == 48
     assert definitions["bank_lending_tightening"]["minimum_observations"] == 16
     assert health.json()["active_indicators"] == 24
@@ -150,7 +151,7 @@ def test_manual_recalculation_and_indicator_history_endpoints(tmp_path):
     missing = request_with_lifespan(app, "/api/v1/indicators/not-real/history")
 
     assert result.status_code == 200
-    assert result.json()["normalization"]["methodology_version"] == "0.10.0"
+    assert result.json()["normalization"]["methodology_version"] == "0.11.0"
     assert result.json()["scoring"]["scores_saved"] == 6
     scenarios = request_with_lifespan(app, "/api/v1/scenarios")
     macro = next(row for row in scenarios.json()["items"] if row["id"] == "macro_crisis")

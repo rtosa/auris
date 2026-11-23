@@ -10,7 +10,7 @@ from sqlalchemy import Engine, text
 
 from app.collectors.definitions import IndicatorDefinition
 from app.collectors.fiscalai import COMPANY_KEYS as ANALYST_ESTIMATE_COMPANIES
-from app.indicators.normalization import normalize_series
+from app.indicators.normalization import normalize_series, transform_series
 from app.services.collection import indicator_catalog
 from app.services.companies import load_company_universe
 
@@ -51,7 +51,8 @@ def recalculate_indicators(engine: Engine, definitions: list[IndicatorDefinition
             }).mappings().all()
             if not observations:
                 continue
-            points = [(date.fromisoformat(str(row["observation_date"])), row["raw_value"]) for row in observations]
+            source_points = [(date.fromisoformat(str(row["observation_date"])), row["raw_value"]) for row in observations]
+            points = transform_series(source_points, definition.transformation)
             normalized = normalize_series(
                 points,
                 definition.normalization_method or str(defaults["method"]),
@@ -63,14 +64,15 @@ def recalculate_indicators(engine: Engine, definitions: list[IndicatorDefinition
             expected = _expected_observations(definition)
             rows = []
             valid_history = 0
-            for observation, (observation_date, _), normalized_value in zip(observations, points, normalized):
-                raw_value = observation["raw_value"]
+            for observation, (_, source_value), (observation_date, raw_value), normalized_value in zip(
+                observations, source_points, points, normalized,
+            ):
                 if raw_value is not None:
                     valid_history += 1
-                if raw_value is None:
+                if source_value is None:
                     quality, confidence = "missing", 0.0
                     missing_count += 1
-                elif normalized_value is None:
+                elif raw_value is None or normalized_value is None:
                     quality, confidence = "insufficient_history", 0.0
                     insufficient_count += 1
                 else:
@@ -713,7 +715,8 @@ def scenario_history(engine: Engine, scenario_id: str, days: int) -> list[dict[s
 
 def indicator_history(engine: Engine, indicator_id: str, days: int) -> list[dict[str, Any]]:
     with engine.connect() as connection:
-        rows = connection.execute(text("""SELECT r.observation_date, r.raw_value,
+        rows = connection.execute(text("""SELECT r.observation_date,
+            CASE WHEN i.indicator_id IS NOT NULL THEN i.raw_value ELSE r.raw_value END AS raw_value,
             i.normalized_value, i.confidence, i.data_quality, r.source_id, r.source_reference
             FROM raw_observations r LEFT JOIN indicator_values i
               ON i.indicator_id=r.indicator_id AND i.observation_date=r.observation_date

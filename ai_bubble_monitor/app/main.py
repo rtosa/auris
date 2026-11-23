@@ -43,7 +43,7 @@ from app.services.scoring import (
     scenario_history,
 )
 
-APP_VERSION = "0.23.8"
+APP_VERSION = "0.23.9"
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
@@ -67,6 +67,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.engine = engine
         if app_settings.auto_collection_enabled:
             collection_task = asyncio.create_task(periodic_collection())
+        else:
+            # Reapply model and measurement changes to stored observations even
+            # when background source collection has been disabled.
+            recalculate_indicators(engine, definitions)
+            recalculate_scenarios(engine, definitions)
         yield
         if collection_task is not None:
             collection_task.cancel()

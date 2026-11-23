@@ -23,6 +23,7 @@ class IndicatorDefinition:
     minimum_observations: int = 60
     enabled: bool = True
     availability_note: str | None = None
+    transformation: str | None = None
 
     def as_configuration(self) -> dict[str, object]:
         return {
@@ -34,6 +35,7 @@ class IndicatorDefinition:
             "minimum_observations": self.minimum_observations,
             "enabled": self.enabled,
             "availability_note": self.availability_note,
+            "transformation": self.transformation,
         }
 
 
@@ -64,6 +66,7 @@ def load_definitions(path: Path | None = None) -> list[IndicatorDefinition]:
             minimum_observations=int(row.get("minimum_observations", 60)),
             enabled=bool(row.get("enabled", True)),
             availability_note=(str(row["availability_note"]) if row.get("availability_note") else None),
+            transformation=(str(row["transformation"]) if row.get("transformation") else None),
         )
         if definition.id in seen:
             raise ValueError(f"Duplicate indicator id: {definition.id}")

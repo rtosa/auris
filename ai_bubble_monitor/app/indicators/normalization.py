@@ -56,6 +56,16 @@ def normalize_series(
     return _rolling_rank(ordered, signals, direction, lookback_days, minimum_observations)
 
 
+def transform_series(points: Iterable[Point], transformation: str | None) -> list[Point]:
+    """Apply a configured measurement transform while preserving observation dates."""
+    ordered = list(points)
+    if transformation is None:
+        return ordered
+    if transformation != "year_over_year_percent_change":
+        raise ValueError(f"Unsupported series transformation: {transformation}")
+    return list(zip([day for day, _ in ordered], _year_over_year_percent_changes(ordered)))
+
+
 def _window_values(points: list[Point], index: int, observed_on: date, lookback_days: int) -> list[float]:
     floor = observed_on - timedelta(days=lookback_days)
     return [float(value) for point_date, value in points[: index + 1]
@@ -139,6 +149,24 @@ def _derive_signals(points: list[Point], method: str) -> list[float | None]:
         volatility = stdev(recent_returns) if len(recent_returns) >= 2 else None
         signals.append(current_return / volatility if current_return is not None and volatility else None)
     return signals
+
+
+def _year_over_year_percent_changes(points: list[Point]) -> list[float | None]:
+    """Compare each observation with the closest available point at least 365 days earlier."""
+    results: list[float | None] = []
+    for index, (observed_on, value) in enumerate(points):
+        target = observed_on - timedelta(days=365)
+        prior = next(((prior_date, prior_value) for prior_date, prior_value in reversed(points[:index])
+                      if prior_date <= target and prior_value not in (None, 0)), None)
+        if value is None or prior is None:
+            results.append(None)
+            continue
+        prior_date, prior_value = prior
+        if (target - prior_date).days > 45:
+            results.append(None)
+            continue
+        results.append(round((float(value) / float(prior_value) - 1.0) * 100.0, 6))
+    return results
 
 
 def _orient(value: float, direction: str) -> float:
