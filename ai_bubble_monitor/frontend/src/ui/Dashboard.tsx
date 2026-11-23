@@ -219,6 +219,16 @@ function scenarioOutlookLabel(id: string): string {
   return labels[id] ?? "SCENARIO SIGNAL";
 }
 
+function scenarioImpact(id: string): string {
+  const impacts: Record<string, string> = {
+    boom_continuation: "Low",
+    prolonged_repricing: "Moderate",
+    credit_crunch: "High",
+    macro_crisis: "Extreme",
+  };
+  return impacts[id] ?? "Unrated";
+}
+
 function scenarioSignalBand(score: number | null): string {
   if (score === null) return "unavailable";
   if (score <= 19) return "very-low";
@@ -502,7 +512,7 @@ export function Dashboard() {
             <span className="outlook-label">CURRENT ECOSYSTEM CONDITION</span>
             <h2 id="scenario-outlook-title">{leadingScenario ? scenarioOutlookLabel(leadingScenario.id) : "SIGNALS NOT AVAILABLE"}</h2>
             <p>{leadingScenario
-              ? `The strongest current evidence aligns with ${leadingScenario.name}. Scores show signal strength, not the probability of an outcome.`
+              ? `The strongest current evidence aligns with ${leadingScenario.name}. Scores show present signal strength, not probability; impact labels describe consequences if a scenario unfolds.`
               : "Scenario signals will appear when enough source data is available."}</p>
           </div>
           <div className="outlook-list" aria-label="Scenario signals in fixed model order">
@@ -511,7 +521,10 @@ export function Dashboard() {
               return <div className={`outlook-row ${band}`} key={scenario.id}>
                 <div className="outlook-row-heading">
                   <span className="outlook-rank">{String(index + 1).padStart(2, "0")}</span>
-                  <strong>{scenario.name}</strong>
+                  <span className="outlook-title-group">
+                    <strong>{scenario.name}</strong>
+                    <span className={`impact-badge impact-${scenarioImpact(scenario.id).toLowerCase()}`} title="Qualitative potential consequence if this scenario unfolds">Impact: {scenarioImpact(scenario.id)}</span>
+                  </span>
                   <b className="outlook-score">{scenario.score === null ? "—" : `${Math.round(scenario.score)}/100`}</b>
                 </div>
                 <div className="outlook-track" role="img" aria-label={`${scenario.name}: ${scenario.score === null ? "score unavailable" : `${scenario.score.toFixed(1)} out of 100, ${plainSignalLevel(scenario.classification)} evidence signal`}`}>
@@ -530,7 +543,7 @@ export function Dashboard() {
           <div>
             <div className="eyebrow">FOUR POSSIBLE STRESS PATTERNS</div>
             <h2 id="scenario-title">What the signals point to</h2>
-            <p>Each score shows the strength of evidence for that pattern today, not its chance of happening. Compare the bars and contributing factors; coverage and reliability describe the data behind each score.</p>
+            <p>Scores show current evidence strength, not probability. Impact labels describe qualitative consequences if a scenario unfolds; coverage and reliability describe the data behind each score.</p>
           </div>
         </div>
         <div className="scenario-grid">
@@ -542,7 +555,10 @@ export function Dashboard() {
             return (
               <article className={`scenario-card ${scenario.status}`} key={scenario.id}>
                 <div className="scenario-card-heading">
-                  <h3>{scenario.name}</h3>
+                  <div className="scenario-title-group">
+                    <h3>{scenario.name}</h3>
+                    <span className={`impact-badge impact-${scenarioImpact(scenario.id).toLowerCase()}`} title="Qualitative potential consequence if this scenario unfolds">Impact: {scenarioImpact(scenario.id)}</span>
+                  </div>
                   <span className={`scenario-badge ${scenario.status}`}>{scenario.score === null ? "Awaiting data" : scenario.status === "partial_coverage" ? "Partial data" : scenario.status === "low_confidence" ? "Lower reliability" : "Signal available"}</span>
                 </div>
                 <p className="scenario-description">{scenarioDescription(scenario.id)}</p>

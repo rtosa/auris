@@ -132,8 +132,14 @@ h1 span { color: #8ca5a9; }
 .outlook-row { padding: 14px 0 13px; border-top: 1px solid rgba(182,202,216,.08); }
 .outlook-row-heading { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: baseline; gap: 10px; }
 .outlook-rank { color: #a3b0b7; font-size: 12px; font-variant-numeric: tabular-nums; }
+.outlook-title-group { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; min-width: 0; }
 .outlook-row-heading strong { min-width: 0; color: #e6edf1; font-size: 15px; line-height: 1.35; font-weight: 620; }
 .outlook-score { color: #e8eef2; font-size: 20px; line-height: 1; font-weight: 650; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
+.impact-badge { display: inline-flex; align-items: center; flex: 0 0 auto; padding: 4px 7px; border: 1px solid rgba(182,202,216,.15); border-radius: 12px; color: #aebbc3; background: rgba(255,255,255,.035); font-size: 10px; line-height: 1.2; font-weight: 600; white-space: nowrap; }
+.impact-low { border-color: rgba(72,211,164,.2); color: #79d6b5; background: rgba(72,211,164,.07); }
+.impact-moderate { border-color: rgba(228,184,97,.22); color: #e4bf73; background: rgba(228,184,97,.07); }
+.impact-high { border-color: rgba(232,151,88,.25); color: #efa16a; background: rgba(232,151,88,.08); }
+.impact-extreme { border-color: rgba(211,108,112,.28); color: #ef9092; background: rgba(211,108,112,.09); }
 .outlook-track { height: 8px; margin-top: 9px; overflow: hidden; border-radius: 6px; background: rgba(255,255,255,.09); }
 .outlook-track span { display: block; height: 100%; min-width: 0; border-radius: inherit; background: #55c69e; transition: width .35s ease; }
 .outlook-row.very-low .outlook-track span, .outlook-row.low .outlook-track span { background: #55b875; }
@@ -153,6 +159,7 @@ h1 span { color: #8ca5a9; }
 .scenario-card.partial_coverage { border-color: rgba(228,184,97,.28); }
 .scenario-card.unavailable { background: rgba(18,27,35,.7); }
 .scenario-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.scenario-title-group { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 9px; min-width: 0; }
 .scenario-card-heading h3 { margin: 0; color: #e6eef2; font-size: 15px; line-height: 1.4; font-weight: 600; }
 .scenario-description { min-height: 28px; margin: 7px 0 0; color: #a3b1bb; font-size: 12px; line-height: 1.5; }
 .scenario-badge { flex: 0 0 auto; padding: 4px 7px; border-radius: 10px; color: #aab8bf; background: rgba(255,255,255,.045); font: 9px ui-monospace, SFMono-Regular, Consolas, monospace; text-transform: uppercase; }

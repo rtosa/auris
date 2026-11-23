@@ -43,7 +43,7 @@ from app.services.scoring import (
     scenario_history,
 )
 
-APP_VERSION = "0.23.9"
+APP_VERSION = "0.23.10"
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
