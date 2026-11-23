@@ -1,6 +1,6 @@
 name: AI Bubble Monitor
 slug: ai_bubble_monitor
-version: 0.23.2
+version: 0.23.3
 description: Local AI risk monitor with explainable scenario scores
 arch:
   - amd64

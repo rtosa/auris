@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.requests import Request
 from fastapi.staticfiles import StaticFiles
 
@@ -42,7 +43,7 @@ from app.services.scoring import (
     scenario_history,
 )
 
-APP_VERSION = "0.23.2"
+APP_VERSION = "0.23.3"
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
@@ -327,11 +328,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await run_collection()
 
     @application.get("/", include_in_schema=False)
-    async def index() -> FileResponse:
+    async def index() -> HTMLResponse:
         index_path = STATIC_DIR / "index.html"
         if not index_path.is_file():
             raise HTTPException(status_code=503, detail="dashboard assets unavailable")
-        return FileResponse(index_path)
+        html = index_path.read_text(encoding="utf-8")
+        asset_tag = re.compile(
+            r'<script\b(?=[^>]*\bsrc=["\']([^"\']+\.js)["\'])[^>]*></script>',
+            re.IGNORECASE,
+        )
+        script_match = asset_tag.search(html)
+        if script_match:
+            asset_path = (STATIC_DIR / script_match.group(1).removeprefix("./")).resolve()
+            if asset_path.is_relative_to((STATIC_DIR / "assets").resolve()) and asset_path.is_file():
+                javascript = asset_path.read_text(encoding="utf-8").replace("</script", "<\\/script")
+                html = html[: script_match.start()] + f'<script type="module">{javascript}</script>' + html[script_match.end() :]
+
+        stylesheet_tag = re.compile(
+            r'<link\b(?=[^>]*\brel=["\']stylesheet["\'])(?=[^>]*\bhref=["\']([^"\']+\.css)["\'])[^>]*>',
+            re.IGNORECASE,
+        )
+        stylesheet_match = stylesheet_tag.search(html)
+        if stylesheet_match:
+            asset_path = (STATIC_DIR / stylesheet_match.group(1).removeprefix("./")).resolve()
+            if asset_path.is_relative_to((STATIC_DIR / "assets").resolve()) and asset_path.is_file():
+                stylesheet = asset_path.read_text(encoding="utf-8")
+                html = html[: stylesheet_match.start()] + f"<style>{stylesheet}</style>" + html[stylesheet_match.end() :]
+
+        return HTMLResponse(html)
 
     if STATIC_DIR.is_dir():
         application.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
