@@ -31,6 +31,16 @@ def test_settings_read_home_assistant_options(tmp_path, monkeypatch):
     assert settings.historical_window_days == 1825
 
 
+def test_settings_read_direct_access_option(tmp_path, monkeypatch):
+    (tmp_path / "options.json").write_text(
+        json.dumps({"allow_direct_access": True}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    assert Settings.load().allow_direct_access is True
+
+
 def test_fred_key_environment_overrides_options(tmp_path, monkeypatch):
     (tmp_path / "options.json").write_text(json.dumps({"fred_api_key": "options-key"}), encoding="utf-8")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))

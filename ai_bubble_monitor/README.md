@@ -41,7 +41,7 @@ docker compose --profile test run --build --rm backend-tests
 
 ## Configuration
 
-The Home Assistant options schema exposes `log_level`, collection and scoring intervals, automatic collection, `fred_api_key`, `fiscal_api_key`, and `historical_window_days`. CoinPaprika and Proskauer public context feeds can run without API keys.
+The Home Assistant options schema exposes `log_level`, collection and scoring intervals, automatic collection, `fred_api_key`, `fiscal_api_key`, `sec_user_agent`, `allow_direct_access`, and `historical_window_days`. The app maps container port 8099 to host port 8100 by default. If 8100 is in use, change the host port in the app's Configuration tab under Network. `allow_direct_access` enables direct LAN and Cloudflare Tunnel origin access. Cloudflare Access protects the external hostname; LAN access bypasses it.
 
 Docker checks `/api/v1/health` and restarts the process according to the Compose restart policy. The local SQLite database persists in `dev-data/`. To create a consistent standalone backup while the app is running:
 

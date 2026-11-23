@@ -1,6 +1,6 @@
 name: AI Bubble Monitor
 slug: ai_bubble_monitor
-version: 0.23.5
+version: 0.23.6
 description: Local AI risk monitor with explainable scenario scores
 arch:
   - amd64
@@ -9,6 +9,10 @@ init: false
 boot: auto
 ingress: true
 ingress_port: 8099
+ports:
+  8099/tcp: 8100
+ports_description:
+  8099/tcp: Direct LAN connection or Cloudflare Tunnel origin; change host port if 8100 is in use
 panel_icon: mdi:chart-line
 panel_title: AI Bubble Monitor
 panel_admin: false
@@ -20,6 +24,7 @@ options:
   fred_api_key: ""
   fiscal_api_key: ""
   sec_user_agent: ""
+  allow_direct_access: true
   historical_window_days: 1825
 schema:
   log_level: list(debug|info|warning|error)
@@ -29,5 +34,6 @@ schema:
   fred_api_key: password
   fiscal_api_key: password
   sec_user_agent: str
+  allow_direct_access: bool
   historical_window_days: int(365,3650)
 

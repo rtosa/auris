@@ -169,15 +169,24 @@ def test_manual_recalculation_and_indicator_history_endpoints(tmp_path):
 
 
 def test_ingress_mode_rejects_non_home_assistant_sources(tmp_path):
-    app = create_app(Settings(data_dir=tmp_path, ingress_mode=True))
+    app = create_app(Settings(data_dir=tmp_path, ingress_mode=True, allow_direct_access=False))
 
     response = request_with_lifespan(app, "/api/v1/health", ("192.0.2.10", 1234))
 
     assert response.status_code == 403
 
 
+def test_direct_access_can_be_enabled_for_lan_or_tunnel(tmp_path):
+    app = create_app(Settings(data_dir=tmp_path, ingress_mode=True, allow_direct_access=True))
+    health = request_with_lifespan(app, "/api/v1/health", ("192.0.2.10", 1234))
+    allowed = request_with_lifespan(app, "/api/v1/companies", ("192.0.2.10", 1234))
+
+    assert health.status_code == 200
+    assert allowed.status_code == 200
+
+
 def test_ingress_mode_allows_loopback_health_probe_only(tmp_path):
-    app = create_app(Settings(data_dir=tmp_path, ingress_mode=True))
+    app = create_app(Settings(data_dir=tmp_path, ingress_mode=True, allow_direct_access=False))
     health = request_with_lifespan(app, "/api/v1/health", ("127.0.0.1", 54321))
     other = request_with_lifespan(app, "/api/v1/companies", ("127.0.0.1", 54321))
     assert health.status_code == 200

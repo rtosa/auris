@@ -43,7 +43,7 @@ from app.services.scoring import (
     scenario_history,
 )
 
-APP_VERSION = "0.23.5"
+APP_VERSION = "0.23.6"
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
@@ -149,7 +149,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if app_settings.ingress_mode:
             remote_host = request.client.host if request.client else None
             local_health_probe = request.url.path == "/api/v1/health" and remote_host in {"127.0.0.1", "::1"}
-            if remote_host != "172.30.32.2" and not local_health_probe:
+            ingress_proxy = remote_host == "172.30.32.2"
+            if not ingress_proxy and not local_health_probe and not app_settings.allow_direct_access:
                 return JSONResponse(status_code=403, content={"detail": "Ingress access only"})
 
             ingress_path = request.headers.get("x-ingress-path", "").rstrip("/")

@@ -16,6 +16,7 @@ class Settings:
     scoring_interval_minutes: int = 60
     auto_collection_enabled: bool = False
     ingress_mode: bool = True
+    allow_direct_access: bool = True
     fred_api_key: str | None = None
     fiscal_api_key: str | None = None
     sec_user_agent: str | None = None
@@ -70,6 +71,7 @@ class Settings:
             auto_collection_enabled=_boolean(auto_collection_raw, "auto_collection_enabled"),
             ingress_mode=os.environ.get("HA_INGRESS_MODE", "true").lower()
             not in {"0", "false", "no"},
+            allow_direct_access=_boolean(options.get("allow_direct_access", True), "allow_direct_access"),
             fred_api_key=str(fred_api_key).strip() or None,
             fiscal_api_key=str(fiscal_api_key).strip() or None,
             sec_user_agent=str(sec_user_agent).strip() or None,

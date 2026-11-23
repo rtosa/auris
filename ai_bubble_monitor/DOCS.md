@@ -8,7 +8,7 @@ The current collection workflow covers 24 active indicators: 21 FRED macro, mark
 
 ## Open the dashboard
 
-Start the app in Home Assistant and choose **Open Web UI**. Home Assistant Ingress provides access to the dashboard. The app accepts connections through the Supervisor proxy and rejects requests from other network addresses.
+Start the app in Home Assistant and choose **Open Web UI**. Home Assistant Ingress provides access to the dashboard. The app also maps its internal port 8099 to host port 8100 for LAN access and a Cloudflare Tunnel origin. If 8100 is in use, change the host port in the app's Configuration tab under Network; the app continues listening on 8099 inside its container. Put Cloudflare Access in front of the public tunnel hostname. Direct LAN access remains available and does not go through Cloudflare Access.
 
 Ingress requests are normalized using the `X-Ingress-Path` header so API and documentation links continue to work beneath Home Assistant's URL prefix.
 
@@ -23,6 +23,7 @@ Ingress requests are normalized using the `X-Ingress-Path` header so API and doc
 | `fred_api_key` | empty | Free FRED API key; the application never returns or logs it. |
 | `fiscal_api_key` | empty | Optional Fiscal.ai API key for point-in-time EPS and revenue consensus estimates. Stored locally and never returned or logged. |
 | `sec_user_agent` | empty | Descriptive app identifier and contact email required for SEC EDGAR collection. Kept local and sent as the SEC request header. |
+| `allow_direct_access` | `true` | Allows requests that do not come through Home Assistant Ingress. This enables direct LAN and Cloudflare Tunnel origin access. Cloudflare Access protects only the public hostname; direct LAN requests bypass it. |
 | `historical_window_days` | `1825` | Initial FRED history window (1–10 years). |
 
 FRED API keys are free and available from [the FRED API key page](https://fred.stlouisfed.org/docs/api/api_key.html).
