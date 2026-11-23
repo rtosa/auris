@@ -6,5 +6,5 @@ The local app collects macro and market data from FRED and CoinPaprika, and SEC 
 
 The HA app lives in [`ai_bubble_monitor/`](ai_bubble_monitor/) and is built as one container with a FastAPI backend, a React dashboard, and SQLite persistence under `/data`.
 
-See [`ai_bubble_monitor/README.md`](ai_bubble_monitor/README.md) for installation and local development instructions, and [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) for phase scope and acceptance checks. The current local build is version 0.23.3.
+See [`ai_bubble_monitor/README.md`](ai_bubble_monitor/README.md) for installation and local development instructions, and [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) for phase scope and acceptance checks. The current local build is version 0.23.4.
 

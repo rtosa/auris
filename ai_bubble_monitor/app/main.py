@@ -43,7 +43,7 @@ from app.services.scoring import (
     scenario_history,
 )
 
-APP_VERSION = "0.23.3"
+APP_VERSION = "0.23.4"
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
@@ -333,27 +333,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not index_path.is_file():
             raise HTTPException(status_code=503, detail="dashboard assets unavailable")
         html = index_path.read_text(encoding="utf-8")
-        asset_tag = re.compile(
-            r'<script\b(?=[^>]*\bsrc=["\']([^"\']+\.js)["\'])[^>]*></script>',
-            re.IGNORECASE,
-        )
-        script_match = asset_tag.search(html)
-        if script_match:
-            asset_path = (STATIC_DIR / script_match.group(1).removeprefix("./")).resolve()
-            if asset_path.is_relative_to((STATIC_DIR / "assets").resolve()) and asset_path.is_file():
-                javascript = asset_path.read_text(encoding="utf-8").replace("</script", "<\\/script")
-                html = html[: script_match.start()] + f'<script type="module">{javascript}</script>' + html[script_match.end() :]
+        # Scan actual HTML tags while skipping inline script bodies. A JS bundle can
+        # contain strings that look like <script src=...> tags; matching the whole
+        # document with a regex would corrupt that JavaScript.
+        tag_pattern = re.compile(r"<(script|link)\b[^>]*>", re.IGNORECASE)
+        cursor = 0
+        while tag_match := tag_pattern.search(html, cursor):
+            tag = tag_match.group(0)
+            if tag_match.group(1).lower() == "script":
+                closing_match = re.search(r"</script\s*>", html[tag_match.end() :], re.IGNORECASE)
+                if closing_match is None:
+                    break
+                closing_start = tag_match.end() + closing_match.start()
+                closing_end = tag_match.end() + closing_match.end()
+                source_match = re.search(r"\bsrc=[\"']([^\"']+\.js)[\"']", tag, re.IGNORECASE)
+                if source_match:
+                    asset_path = (STATIC_DIR / source_match.group(1).removeprefix("./")).resolve()
+                    if asset_path.is_relative_to((STATIC_DIR / "assets").resolve()) and asset_path.is_file():
+                        javascript = asset_path.read_text(encoding="utf-8")
+                        javascript = re.sub(r"</script", r"<\\/script", javascript, flags=re.IGNORECASE)
+                        html = html[: tag_match.start()] + f'<script type="module">{javascript}</script>' + html[closing_end:]
+                        cursor = tag_match.start() + len(javascript) + len('<script type="module"></script>')
+                        continue
+                cursor = closing_end
+                continue
 
-        stylesheet_tag = re.compile(
-            r'<link\b(?=[^>]*\brel=["\']stylesheet["\'])(?=[^>]*\bhref=["\']([^"\']+\.css)["\'])[^>]*>',
-            re.IGNORECASE,
-        )
-        stylesheet_match = stylesheet_tag.search(html)
-        if stylesheet_match:
-            asset_path = (STATIC_DIR / stylesheet_match.group(1).removeprefix("./")).resolve()
-            if asset_path.is_relative_to((STATIC_DIR / "assets").resolve()) and asset_path.is_file():
-                stylesheet = asset_path.read_text(encoding="utf-8")
-                html = html[: stylesheet_match.start()] + f"<style>{stylesheet}</style>" + html[stylesheet_match.end() :]
+            rel_match = re.search(r"\brel=[\"']stylesheet[\"']", tag, re.IGNORECASE)
+            href_match = re.search(r"\bhref=[\"']([^\"']+\.css)[\"']", tag, re.IGNORECASE)
+            if rel_match and href_match:
+                asset_path = (STATIC_DIR / href_match.group(1).removeprefix("./")).resolve()
+                if asset_path.is_relative_to((STATIC_DIR / "assets").resolve()) and asset_path.is_file():
+                    stylesheet = asset_path.read_text(encoding="utf-8")
+                    html = html[: tag_match.start()] + f"<style>{stylesheet}</style>" + html[tag_match.end() :]
+                    cursor = tag_match.start() + len(stylesheet) + len("<style></style>")
+                    continue
+            cursor = tag_match.end()
 
         return HTMLResponse(html)
 

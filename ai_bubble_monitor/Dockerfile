@@ -21,7 +21,7 @@ RUN npm run build
 
 FROM python:3.12-slim
 
-ARG BUILD_VERSION=0.23.3
+ARG BUILD_VERSION=0.23.4
 ARG BUILD_ARCH=amd64
 
 LABEL io.hass.version="${BUILD_VERSION}" \
