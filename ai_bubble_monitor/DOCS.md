@@ -21,10 +21,13 @@ Ingress requests are normalized using the `X-Ingress-Path` header so API and doc
 | `scoring_interval_minutes` | `60` | Reserved for a separate scoring schedule; scores currently refresh after each collection. |
 | `auto_collection_enabled` | `true` | Runs configured feeds on startup and at the collection interval. Public feeds work without API keys. |
 | `fred_api_key` | empty | Free FRED API key; the application never returns or logs it. |
+| `fiscal_api_key` | empty | Optional Fiscal.ai API key for point-in-time EPS and revenue consensus estimates. Stored locally and never returned or logged. |
 | `sec_user_agent` | empty | Descriptive app identifier and contact email required for SEC EDGAR collection. Kept local and sent as the SEC request header. |
 | `historical_window_days` | `1825` | Initial FRED history window (1–10 years). |
 
 FRED API keys are free and available from [the FRED API key page](https://fred.stlouisfed.org/docs/api/api_key.html).
+
+Fiscal.ai is optional. Its free key has a restricted company list and current-calendar-year revision history; your plan may not include Zacks Street Consensus data. When estimates are displayed, the app includes the required attribution: “Data provided by Zacks Investment Research, Inc., www.zacksdata.com”.
 
 ## Data and storage
 
@@ -99,3 +102,4 @@ Coverage remains uneven. Boom continuation and prolonged repricing now receive d
 ## Troubleshooting
 
 If the app does not start, review its Home Assistant app logs. The health endpoint returns HTTP 503 if the database has not initialized or cannot be read. Restarting the app re-runs pending migrations.
+
